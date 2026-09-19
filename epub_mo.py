@@ -47,6 +47,7 @@ from edge_reader import (
     GAP_SWITCH_MS,
     LLM_MODEL_DEFAULT,
     RATE_DEFAULT,
+    WORKERS_DEFAULT,
     assign_voices,
     concatenate,
     llm_prepare,
@@ -175,28 +176,34 @@ def source_text(frags):
 
 # ── Word-timed synthesis ─────────────────────────────────────────────────────
 
-async def synth_word_timed(segments, work_dir, rate):
-    """Synthesize each segment; return (files, word_events) per segment.
+async def synth_word_timed(segments, work_dir, rate, workers=WORKERS_DEFAULT):
+    """Synthesize segments with up to `workers` requests in flight.
+
+    Returns (files, word_events), both in segment order — concatenate() and
+    align_fragments() depend on that order.
 
     word_events[i] = list of (offset_sec, duration_sec, text) from edge-tts
     WordBoundary metadata, relative to the segment's own audio.
     """
-    files, all_events = [], []
-    for i, (speaker, gender, text, voice, voice_name) in enumerate(segments):
+    sem = asyncio.Semaphore(max(1, workers))
+
+    async def synth_one(i, speaker, _gender, text, voice, voice_name):
         seg_path = work_dir / f"seg_{i:03d}.mp3"
         events = []
         for attempt in range(3):
             try:
-                comm = edge_tts.Communicate(text, voice, rate=rate, boundary="WordBoundary")
-                audio = bytearray()
-                events = []
-                async for chunk in comm.stream():
-                    if chunk["type"] == "audio":
-                        audio.extend(chunk["data"])
-                    elif chunk["type"] == "WordBoundary":
-                        events.append((chunk["offset"] / 1e7,
-                                       chunk["duration"] / 1e7,
-                                       chunk["text"]))
+                async with sem:
+                    comm = edge_tts.Communicate(text, voice, rate=rate,
+                                                boundary="WordBoundary")
+                    audio = bytearray()
+                    events = []
+                    async for chunk in comm.stream():
+                        if chunk["type"] == "audio":
+                            audio.extend(chunk["data"])
+                        elif chunk["type"] == "WordBoundary":
+                            events.append((chunk["offset"] / 1e7,
+                                           chunk["duration"] / 1e7,
+                                           chunk["text"]))
                 if not audio:
                     raise RuntimeError("no audio received")
                 seg_path.write_bytes(bytes(audio))
@@ -206,10 +213,14 @@ async def synth_word_timed(segments, work_dir, rate):
                     print(f"  ERROR synthesizing segment {i}: {e}")
                     raise
                 await asyncio.sleep(2 ** attempt)
-        files.append((seg_path, voice_name))
-        all_events.append(events)
         tag = speaker or "narrator"
         print(f"  [{i:03d}] {tag:>14} -> {voice_name} ({len(events)} words)")
+        return ((seg_path, voice_name), events)
+
+    results = await asyncio.gather(
+        *(synth_one(i, *seg) for i, seg in enumerate(segments)))
+    files = [r[0] for r in results]
+    all_events = [r[1] for r in results]
     return files, all_events
 
 
@@ -513,7 +524,8 @@ def process_chapter(z, client, args, fname, work_dir):
     print(f"  {len(segments)} lines: " + ", ".join(f"{k} x{v}" for k, v in cast.items()))
 
     print("  synthesizing with edge-tts...")
-    files, word_events = asyncio.run(synth_word_timed(segments, ch_dir, args.rate))
+    files, word_events = asyncio.run(
+        synth_word_timed(segments, ch_dir, args.rate, args.workers))
     audio_path = ch_dir / "audio.mp3"
     offsets = concatenate(files, audio_path)
     total_dur = offsets[-1][1] if offsets else 0.0
@@ -556,6 +568,8 @@ def main():
                         help="Directory for intermediate segment files")
     parser.add_argument("--rate", default=RATE_DEFAULT,
                         help="edge-tts rate, e.g. -8%% (default)")
+    parser.add_argument("--workers", type=int, default=WORKERS_DEFAULT,
+                        help="Concurrent edge-tts requests (default %(default)s)")
     parser.add_argument("--model", default=LLM_MODEL_DEFAULT,
                         help="Mistral model for preparation")
     parser.add_argument("--max-chars", type=int, default=4000,

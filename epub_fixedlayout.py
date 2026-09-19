@@ -42,6 +42,7 @@ from poc_reader import chunk_text, extract_epub_chapter, list_epub_chapters
 from edge_reader import (
     LLM_MODEL_DEFAULT,
     RATE_DEFAULT,
+    WORKERS_DEFAULT,
     assign_voices,
     concatenate,
     llm_prepare,
@@ -334,7 +335,7 @@ def process_chapter(client, args, idx, work_dir):
     print(f"  {len(segments)} lines: " + ", ".join(f"{k} x{v}" for k, v in cast.items()))
 
     print("  synthesizing with edge-tts...")
-    files = asyncio.run(synthesize(segments, ch_dir, args.rate))
+    files = asyncio.run(synthesize(segments, ch_dir, args.rate, args.workers))
     audio_path = ch_dir / "audio.mp3"
     offsets = concatenate(files, audio_path)
     duration = offsets[-1][1] if offsets else 0.0
@@ -372,7 +373,7 @@ def run_demo(args, width, height):
     work_dir.mkdir(parents=True, exist_ok=True)
     segments = assign_voices(parse_lines(DEMO_TEXT))
     print(f"demo: {len(segments)} lines, synthesizing with edge-tts...")
-    files = asyncio.run(synthesize(segments, work_dir, args.rate))
+    files = asyncio.run(synthesize(segments, work_dir, args.rate, args.workers))
     offsets = concatenate(files, work_dir / "audio.mp3")
     chapter = {
         "ch_id": "ch000",
@@ -402,6 +403,8 @@ def main():
                         help="Directory for intermediate segment files")
     parser.add_argument("--rate", default=RATE_DEFAULT,
                         help="edge-tts rate, e.g. -8%% (default)")
+    parser.add_argument("--workers", type=int, default=WORKERS_DEFAULT,
+                        help="Concurrent edge-tts requests (default %(default)s)")
     parser.add_argument("--model", default=LLM_MODEL_DEFAULT,
                         help="Mistral model for preparation")
     parser.add_argument("--max-chars", type=int, default=4000,

@@ -81,7 +81,7 @@ real-device QA.
 |---|---|
 | LLM preparation (mistral-large-latest) | ~$1.50 (under $0.50 with mistral-small-latest) |
 | edge-tts synthesis | free |
-| Generation time | ~1.5–2h sequential; 30–40 min with parallel synthesis workers (not yet implemented) |
+| Generation time | ~30-40 min with parallel synthesis workers (`--workers`, default 4; implemented 2026-09-19) |
 
 ## Delivery architecture (decided)
 
@@ -130,5 +130,8 @@ Therefore "at need" applies at the **book level**, not chapter level:
 3. User QA of `epub_fixedlayout.py` output in Apple Books on iPhone:
    run `--demo`, then a `--slice 4000` chapter, then `--all`; tune
    `--chars-per-page`/`--viewport` if text overflows or underfills pages.
-4. Add parallel synthesis workers (30–40 min per book).
+4. ~~Add parallel synthesis workers~~ done (2026-09-19): `--workers`
+   (default 4) on edge_reader, epub_mo, epub_readaloud, epub_fixedlayout;
+   asyncio semaphore + gather, segment order preserved; mocked-synthesizer
+   tests in `tests/test_parallel_synth.py`.
 5. Dockerize as the book-level on-demand service for the homelab.
