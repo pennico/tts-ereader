@@ -41,6 +41,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 
 LLM_MODEL_DEFAULT = "mistral-large-latest"
 RATE_DEFAULT = "-8%"
+WORKERS_DEFAULT = 4  # concurrent edge-tts requests (edge-tts is free; be polite)
 GAP_SAME_MS = 250    # silence between consecutive lines of the same voice
 GAP_SWITCH_MS = 600  # silence at a voice change
 
@@ -203,25 +204,33 @@ def assign_voices(lines, andrew_short=False):
     ]
 
 
-async def synthesize(segments, output_dir, rate):
-    """Synthesize each line with edge-tts. Returns list of (path, voice_name)."""
-    files = []
-    for i, (speaker, gender, text, voice, voice_name) in enumerate(segments):
+async def synthesize(segments, output_dir, rate, workers=WORKERS_DEFAULT):
+    """Synthesize lines with edge-tts, up to `workers` requests in flight.
+
+    Returns list of (path, voice_name) in segment order — the order is what
+    concatenate() builds its offsets from, so it must not change.
+    """
+    sem = asyncio.Semaphore(max(1, workers))
+
+    async def synth_one(i, speaker, _gender, text, voice, voice_name):
         seg_path = output_dir / f"seg_{i:03d}.mp3"
         for attempt in range(3):
             try:
-                communicate = edge_tts.Communicate(text, voice, rate=rate)
-                await communicate.save(str(seg_path))
+                async with sem:
+                    communicate = edge_tts.Communicate(text, voice, rate=rate)
+                    await communicate.save(str(seg_path))
                 break
             except Exception as e:
                 if attempt == 2:
                     print(f"  ERROR synthesizing segment {i}: {e}")
                     raise
                 await asyncio.sleep(2 ** attempt)
-        files.append((seg_path, voice_name))
         tag = speaker or "narrator"
         print(f"  [{i:03d}] {tag:>14} -> {voice_name}")
-    return files
+        return (seg_path, voice_name)
+
+    return list(await asyncio.gather(
+        *(synth_one(i, *seg) for i, seg in enumerate(segments))))
 
 
 def concatenate(files, output_mp3):
@@ -253,6 +262,8 @@ def main():
     parser.add_argument("--label", default="edge reading", help="Label for the manifest")
     parser.add_argument("--output-dir", default="out/edge", help="Output directory")
     parser.add_argument("--rate", default=RATE_DEFAULT, help="edge-tts rate, e.g. -8%% (default)")
+    parser.add_argument("--workers", type=int, default=WORKERS_DEFAULT,
+                        help="Concurrent edge-tts requests (default %(default)s)")
     parser.add_argument("--model", default=LLM_MODEL_DEFAULT, help="Mistral model for preparation")
     parser.add_argument("--max-chars", type=int, default=4000, help="Max chars per LLM chunk")
     parser.add_argument("--andrew-short", action="store_true",
@@ -312,7 +323,7 @@ def main():
 
     # Step 3: synthesize
     print("\nSynthesizing with edge-tts...")
-    files = asyncio.run(synthesize(segments, output_dir, args.rate))
+    files = asyncio.run(synthesize(segments, output_dir, args.rate, args.workers))
 
     # Step 4: concatenate + manifest
     output_mp3 = output_dir / "poc_output.mp3"
