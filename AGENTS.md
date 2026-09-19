@@ -41,6 +41,20 @@ another session. The repo is the only coordination bus.
 - Never wait idly for another agent — either proceed with work that is
   within your role, or stop with the issue filed.
 
+## Decision defaults (do not stop to ask)
+
+You may run unattended (headless dispatcher); a stopped session wastes the
+whole run. When a question is not answered by the docs:
+
+- Prefer the simpler, dependency-light option and record the choice in the
+  PR's Handoff section.
+- SPEC/ARCHITECTURE ambiguities: follow `docs/SPEC_v1.md` acceptance
+  criteria literally; where silent, follow commercial-reader conventions
+  (Apple Books / Readest).
+- Never invent live-test results; mark anything untested as untested.
+- Only stop (open a GitHub issue) if proceeding would be irreversible or
+  would break the v0 scripts.
+
 ## Hard constraints
 
 - **Sandbox commands time out at 30 seconds.** Never launch long
