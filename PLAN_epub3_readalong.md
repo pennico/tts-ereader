@@ -92,6 +92,11 @@ Therefore "at need" applies at the **book level**, not chapter level:
   generates the read-along version in the background → download the `.epub`
   → open in Apple Books. A small FastAPI wrapper + Dockerfile around the same
   pipeline code, built after the generator is validated.
+  **Implemented (2026-09-19)**: `service/main.py` (FastAPI, jobs run one at
+  a time as subprocesses), `Dockerfile` (python:3.12-slim + ffmpeg),
+  `docker-compose.yml` (port 8000, `./data` volume, `MISTRAL_API_KEY` from
+  the environment). Smoke-tested locally with uvicorn on a 2-chapter
+  fixture; Docker build/run itself is the owner's to verify at home.
 - **Rejected**: per-chapter on-demand generation with a web/PWA player —
   iOS Safari suspends web audio when the phone is locked, which defeats the
   commute use case.
@@ -134,4 +139,7 @@ Therefore "at need" applies at the **book level**, not chapter level:
    (default 4) on edge_reader, epub_mo, epub_readaloud, epub_fixedlayout;
    asyncio semaphore + gather, segment order preserved; mocked-synthesizer
    tests in `tests/test_parallel_synth.py`.
-5. Dockerize as the book-level on-demand service for the homelab.
+5. ~~Dockerize as the book-level on-demand service for the homelab~~ done
+   (2026-09-19): see "Delivery architecture" above. Remaining owner steps:
+   `docker compose up -d --build` on the homelab, set `MISTRAL_API_KEY`,
+   then generate a real book and open it in Apple Books.

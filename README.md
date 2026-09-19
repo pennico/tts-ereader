@@ -211,6 +211,39 @@ Known trade-off: fixed layout means no user-adjustable font size, and page
 breaks are estimated from character counts, not rendered text. Expect one
 tuning round of `--chars-per-page` per book after looking at it on device.
 
+## Docker service (homelab)
+
+`service/main.py` is a small FastAPI wrapper around the pipeline, per the
+delivery architecture in the plan: drop an EPUB in over HTTP, the pipeline
+runs in the background (one job at a time, others queue), download the
+read-along EPUB when done. Pipeline scripts run as subprocesses so a crash
+takes down one job, not the server.
+
+```bash
+# on the homelab server (needs MISTRAL_API_KEY in the environment)
+docker compose up -d --build
+# then open http://<server>:8000/
+```
+
+The web form uploads a `.epub`, picks the mode (fixed layout for Apple
+Books — default — or reflowable for Thorium), and shows job status with a
+download link. API (also served at `/docs`):
+
+| Endpoint | What |
+|---|---|
+| `POST /jobs` | multipart: `file` (.epub), `mode` (fixed/readaloud), `workers`, `model`, `rate`, `slice` |
+| `GET /jobs` | list jobs |
+| `GET /jobs/{id}` | status + log tail |
+| `GET /jobs/{id}/epub` | download the result (409 until done) |
+
+Uploads, work files, and results live under `/data` (bind-mounted to
+`./data` by `docker compose`). Jobs are held in memory only — restarting
+the container forgets them (files remain on disk).
+
+Note: Docker cannot be run in the development sandbox; the service was
+instead smoke-tested locally with uvicorn: a 2-chapter fixture EPUB went
+queued → running → done, and the downloaded EPUB passed validation.
+
 ## Setup
 
 ### 1. Get a Mistral API key
@@ -227,7 +260,7 @@ tuning round of `--chars-per-page` per book after looking at it on device.
 ### 2. Install dependencies
 
 ```bash
-pip3 install -r requirements.txt
+pip3 install -r requirements.txt   # mistralai, pydub, mutagen, edge-tts
 brew install ffmpeg   # needed for audio concatenation with crossfades
 ```
 
@@ -383,6 +416,11 @@ tts-ereader/
 ├── epub_fixedlayout.py    # Fixed-layout read-along EPUB (Apple Books route)
 ├── poc_player.html        # Web player with synced highlighting + style toggle
 ├── tests/                 # Unit tests (python3 -m unittest discover tests)
+├── service/               # FastAPI homelab service (see "Docker service")
+│   ├── main.py
+│   └── requirements.txt
+├── Dockerfile             # Image for the service (python:3.12-slim + ffmpeg)
+├── docker-compose.yml     # Homelab deployment: port 8000, ./data volume
 ├── voices.json            # Voice profile → voice_id mapping (basic + enhanced)
 ├── requirements.txt       # Python dependencies (mistralai, pydub, mutagen)
 ├── .env                   # API key (gitignored, you create this)
@@ -416,5 +454,5 @@ The PoC is validated. The next phase would be:
 
 1. ~~**Batch generation script**: Process all chapters of a book in the background, with parallel TTS workers to cut time from ~26h to ~9h.~~ Done for the edge-tts engines: `--workers` (default 4) on all EPUB scripts; full-book generation is `--all`.
 2. **Web app (PWA)**: Chapter list with generation status, continuous text view with sentence-level highlighting, playback controls, progress tracking across chapters.
-3. **Backend**: Local FastAPI server that serves chapter list, triggers generation, and serves audio + manifests to the frontend.
+3. ~~**Backend**: Local FastAPI server that serves chapter list, triggers generation, and serves audio + manifests to the frontend.~~ Done at book level: `service/main.py` + Docker (see "Docker service (homelab)").
 4. **On-demand generation**: User clicks a chapter, it generates in the background, becomes available when done.
