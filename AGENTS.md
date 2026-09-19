@@ -27,6 +27,20 @@ C: Implementation, D: Testing & QA — see the workflow table in
 - Update `README.md` and the relevant `PLAN`/`docs` files with what you
   did — the owner reads those first when he returns.
 
+## Handoff protocol (sessions cannot trigger each other)
+
+Cloud sessions are independent: you cannot launch, resume, or signal
+another session. The repo is the only coordination bus.
+
+- End every PR with a **Handoff** section: what is done and verified, what
+  the next role should pick up, and any decision the owner must make.
+- If you are blocked (missing upstream doc, question only the owner can
+  answer, work outside your role), **open a GitHub issue** describing the
+  blocker and stop cleanly. The owner sees the issue from his phone and
+  launches the next session pointed at it.
+- Never wait idly for another agent — either proceed with work that is
+  within your role, or stop with the issue filed.
+
 ## Hard constraints
 
 - **Sandbox commands time out at 30 seconds.** Never launch long

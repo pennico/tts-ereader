@@ -38,7 +38,9 @@ CLI pipeline; this plan is version 1.
 ## TTS engines (pluggable interface, benchmarked)
 
 Build a `TTSEngine` interface with adapters; the app never calls an engine
-directly.
+directly. **Primary engine: Gemini TTS** (owner's key is in place and was
+verified live for both languages on 2026-09-19). edge-tts is the free
+fallback and the source of word-boundary timestamps.
 
 | Engine | Italian | Danish | Cost | Notes |
 |---|---|---|---|---|
@@ -91,7 +93,8 @@ note in the session — never fake upstream work.
 Milestones (suggested; architecture agent refines):
 
 - **M1**: Library + reader view (fonts, themes, both scroll modes, progress).
-- **M2**: TTS engine interface + edge-tts adapter + voice-by-progression
+- **M2**: TTS engine interface + Gemini TTS adapter (primary) + edge-tts
+  adapter (fallback) + voice-by-progression
   (highlight sync, tap-to-read, voice-driven auto-advance).
 - **M3**: Voice tuning UI + LLM preparation integration (Italian + Danish).
 - **M4**: Docker deployment for the homelab + benchmark harness + docs.
