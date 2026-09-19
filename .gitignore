@@ -1,0 +1,13 @@
+out/
+.DS_Store
+*.mp3
+*.wav
+*.opus
+*.flac
+*.pcm
+__pycache__/
+*.pyc
+.env
+voices/*.mp3
+voices/*.wav
+samples/*.epub
