@@ -117,9 +117,9 @@ foreign words are possible.
 
 **Important — Apple Books does not play these files.** Apple Books (iPhone
 and Mac) ignores Media Overlays in reflowable EPUBs; it only plays them in
-fixed-layout books. A valid overlay EPUB opens fine but shows no read-aloud
-controls. Use `epub_readaloud.py` output with Thorium Reader (Mac) or another
-Media Overlays capable reader (see below).
+fixed-layout books. Use `epub_fixedlayout.py` (below) for the Apple Books
+route, or `epub_readaloud.py` output with Thorium Reader (Mac) or another
+Media Overlays capable reader.
 
 ## epub_readaloud: simple read-along EPUB (recommended)
 
@@ -145,15 +145,59 @@ the title being read aloud.
 
 ### Where read-along actually works
 
-| Reader | Media Overlays (reflowable) |
-|---|---|
-| Apple Books (iPhone + Mac) | No — opens the book, ignores the overlay |
-| Thorium Reader (Mac/Win/Linux, free) | Yes — the reference test player |
-| Kobo Books / Adobe Digital Editions (iOS) | Yes (per current reports) |
-| Readest | No |
+| Reader | Media Overlays (reflowable) | Media Overlays (fixed layout) |
+|---|---|---|
+| Apple Books (iPhone + Mac) | No — opens the book, ignores the overlay | Yes — use `epub_fixedlayout.py` |
+| Thorium Reader (Mac/Win/Linux, free) | Yes — the reference test player | Yes |
+| Kobo Books / Adobe Digital Editions (iOS) | Yes (per current reports) | Yes |
+| Readest | No | No |
 
 Test on the Mac with Thorium Reader (https://www.edrlab.org/software/thorium-reader/):
 open the EPUB, press play — sentences highlight in yellow as Giuseppe reads.
+
+## epub_fixedlayout: Apple Books route (fixed layout)
+
+`epub_fixedlayout.py` is the variant that Apple Books will actually play.
+Apple Books ignores Media Overlays in reflowable EPUBs but plays them in
+fixed-layout (pre-paginated) books, so this script paginates the prepared
+reading text into fixed-size pages and emits the metadata Apple requires:
+
+- `rendition:layout` = `pre-paginated` and `rendition:viewport` in the OPF
+- A `<meta name="viewport">` in every page document
+- One XHTML + one SMIL per page; page SMILs clip into the chapter's single
+  audio file (clips are exact concatenation offsets, like epub_readaloud)
+- Pagination by character budget (`--chars-per-page`, default 900): lines
+  are never split across pages, since each line is one SMIL par/clip
+
+```bash
+# Tiny demo book (no API key needed, ~15s) — for Apple Books device QA
+python3 epub_fixedlayout.py --demo --output out/fx_demo.epub
+
+# Test slice of one chapter
+python3 epub_fixedlayout.py --epub "book.epub" --chapter 4 --slice 4000 \
+    --output out/fx_test.epub
+
+# Full book
+python3 epub_fixedlayout.py --epub "book.epub" --all --output out/fx.epub
+```
+
+Same options as `epub_readaloud.py`, plus `--chars-per-page` (default 900)
+and `--viewport WIDTHxHEIGHT` (default 768x1024, portrait). The script
+validates its own output (OPF/SMIL parse, anchors, clip monotonicity, plus
+fixed-layout metadata checks); unit tests in `tests/test_fixedlayout.py`.
+
+### Device QA (Apple Books)
+
+1. `python3 epub_fixedlayout.py --demo --output out/fx_demo.epub`
+2. AirDrop/transfer the file to iPhone (or open on Mac), then open in Apple
+   Books — a read-aloud play control should appear.
+3. If text overflows a page, lower `--chars-per-page` (e.g. 700) or raise
+   `--viewport`; if it looks too sparse, raise the budget.
+4. For a real chapter: `--chapter 4 --slice 4000` first, then `--all`.
+
+Known trade-off: fixed layout means no user-adjustable font size, and page
+breaks are estimated from character counts, not rendered text. Expect one
+tuning round of `--chars-per-page` per book after looking at it on device.
 
 ## Setup
 
@@ -324,7 +368,9 @@ tts-ereader/
 ├── edge_reader.py         # edge-tts hybrid engine (LLM prep + free edge voices)
 ├── epub_mo.py             # EPUB 3 Media Overlays generator (overlays on original XHTML)
 ├── epub_readaloud.py      # Simple read-along EPUB from prepared text (recommended)
+├── epub_fixedlayout.py    # Fixed-layout read-along EPUB (Apple Books route)
 ├── poc_player.html        # Web player with synced highlighting + style toggle
+├── tests/                 # Unit tests (python3 -m unittest discover tests)
 ├── voices.json            # Voice profile → voice_id mapping (basic + enhanced)
 ├── requirements.txt       # Python dependencies (mistralai, pydub, mutagen)
 ├── .env                   # API key (gitignored, you create this)
