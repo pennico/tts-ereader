@@ -1,0 +1,11 @@
+services:
+  tts-ereader:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      # set MISTRAL_API_KEY in your shell or a .env file next to this one
+      MISTRAL_API_KEY: ${MISTRAL_API_KEY:?set MISTRAL_API_KEY in the environment}
+    volumes:
+      - ./data:/data
+    restart: unless-stopped

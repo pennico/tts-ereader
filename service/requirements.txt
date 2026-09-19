@@ -1,0 +1,7 @@
+mistralai>=1.0.0
+pydub>=0.25.1
+mutagen>=1.47.0
+edge-tts>=7.0.0
+fastapi>=0.115
+uvicorn>=0.30
+python-multipart>=0.0.9

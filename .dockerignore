@@ -1,0 +1,10 @@
+.git
+.env
+out
+data
+samples
+voices/*.mp3
+voices/*.wav
+__pycache__
+*.pyc
+.DS_Store
