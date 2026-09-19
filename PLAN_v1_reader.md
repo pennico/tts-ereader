@@ -43,7 +43,7 @@ directly.
 | Engine | Italian | Danish | Cost | Notes |
 |---|---|---|---|---|
 | edge-tts (existing) | Yes (GiuseppeMultilingual + 3 native it-IT) | Yes (Christel, Jeppe) | Free | Current baseline; word-boundary timestamps already used by `epub_mo.py` |
-| Gemini TTS (AI Studio key) | Yes | **Verify at setup** — may not be in the supported list | Free tier | Most expressive; style-controllable ("read as a warm narrator") |
+| Gemini TTS (AI Studio key) | Yes | **Yes — verified 2026-09-19** (live synthesis test, both languages) | Free tier | Most expressive; style-controllable ("read as a warm narrator"). Models seen: gemini-2.5-flash-preview-tts, gemini-2.5-pro-preview-tts, gemini-3.1-flash-tts-preview. Output: raw PCM L16 24kHz mono |
 | Google Cloud TTS | Yes | Yes (da-DK documented) | ~1M chars/month free (billing account required) | Documented Danish; WaveNet/Neural2 quality |
 
 Engine choice per book is a setting. The benchmark deliverable (spec agent)
@@ -98,10 +98,8 @@ Milestones (suggested; architecture agent refines):
 
 ## Owner's setup TODOs (outside the repo)
 
-- Google API keys (owner does this himself; keys go in local `.env`, never
-  in the repo):
-  - Gemini API: aistudio.google.com → Get API key (free tier, no card).
-  - Google Cloud TTS: console.cloud.google.com → project → enable
-    "Cloud Text-to-Speech API" → create key (free ~1M chars/month, billing
-    account required).
+- Google API key: DONE (2026-09-19). Gemini API key created via AI Studio
+  and stored in local `.env` as `GEMINI_API_KEY`; Danish and Italian
+  synthesis verified live. **Cloud TTS is not needed** — skip it unless a
+  future benchmark shows it beats Gemini for a language we care about.
 - Copy test books to wherever the app runs (homelab) when testing live.
