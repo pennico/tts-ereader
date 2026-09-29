@@ -65,6 +65,11 @@ whole run. When a question is not answered by the docs:
   with tiny slices, mocked synthesizers, and synthetic EPUB fixtures you
   generate programmatically. There are no book EPUBs in the repo
   (copyright; `samples/*.epub` is gitignored) — build fixtures instead.
+- **Never pip install into the system Python.** Sessions may run inside
+  the agent-runner container, whose Python is shared with the `vibe`
+  CLI itself — installing or upgrading packages there breaks the agent
+  loop. If you need dependencies, use a venv:
+  `python3 -m venv /tmp/venv && /tmp/venv/bin/pip install ...`.
 - Never commit `.env`, API keys, audio files, or copyrighted books.
   `.gitignore` covers them — keep it that way. Keys (MISTRAL_API_KEY,
   GEMINI_API_KEY, GOOGLE_TTS_KEY) live only in the owner's local `.env`.
