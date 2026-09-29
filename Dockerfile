@@ -21,6 +21,10 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY backend/ ./backend/
+# shared/: the preparation pipeline imports shared.text_preparation at
+# runtime (llm_service bootstraps /app onto sys.path) — without it the
+# prepare/voice-cast endpoints fail in the container.
+COPY shared/ ./shared/
 COPY --from=frontend-builder /build/dist ./frontend/dist
 
 # All persisted state (SQLite DB, EPUBs, covers, audio cache) under /data,
