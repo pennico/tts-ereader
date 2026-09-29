@@ -382,7 +382,11 @@ tts-ereader/
 ├── epub_readaloud.py      # Simple read-along EPUB from prepared text (recommended)
 ├── epub_fixedlayout.py    # Fixed-layout read-along EPUB (Apple Books route)
 ├── poc_player.html        # Web player with synced highlighting + style toggle
-├── tests/                 # Unit tests (python3 -m unittest discover tests)
+├── tests/                 # v0 unit tests (python3 -m unittest discover tests)
+│   └── fixtures/make_fixture_epub.py  # Synthetic EPUB generator (no copyrighted books)
+├── backend/               # v1 reader app (M1 in progress — see docs/ARCHITECTURE_v1.md)
+│   ├── app/               # FastAPI: library/reader API, EPUB parser, SQLite models
+│   └── tests/             # pytest unit + integration tests (21 passing)
 ├── voices.json            # Voice profile → voice_id mapping (basic + enhanced)
 ├── requirements.txt       # Python dependencies (mistralai, pydub, mutagen)
 ├── .env                   # API key (gitignored, you create this)
@@ -400,6 +404,29 @@ tts-ereader/
     ├── italian_enhanced/
     └── ggs_ch3/           # Guns, Germs, and Steel preface
 ```
+
+## v1 reader app (M1 in progress)
+
+The v1 backend skeleton is in `backend/` (FastAPI + SQLite via SQLModel, per
+`docs/ARCHITECTURE_v1.md`). Implemented so far: EPUB import with metadata and
+spine-ordered chapter indexing, library list/get/delete, per-book progress
+persistence, chapter text endpoints, and synthetic EPUB fixtures.
+
+```bash
+pip3 install -r requirements.txt -r requirements-dev.txt
+
+# Run the test suite (unit + integration, <1s)
+python3 -m pytest backend/tests -q
+
+# Generate synthetic test EPUBs (never commit real books)
+python3 tests/fixtures/make_fixture_epub.py --out-dir /tmp/epubs
+
+# Run the API server (data lives in ./data or $TTSEREADER_DATA_DIR)
+cd backend && python3 -m uvicorn app.main:app --reload
+```
+
+Not yet implemented: the Svelte frontend (library/reader UI, themes, fonts,
+scroll modes) and Docker deployment — see `ROADMAP.md`.
 
 ## Technical notes
 
