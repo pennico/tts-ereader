@@ -1,9 +1,9 @@
 /**
- * Per-book TTS settings (AC-301..AC-303), persisted to localStorage per book.
- * Voice cast persistence beyond a single narrator is M3 (AC-307).
+ * Per-book TTS settings (AC-301..AC-304, AC-305, AC-307), persisted to
+ * localStorage per book.
  */
 import { writable } from "svelte/store";
-import { DEFAULT_TTS_SETTINGS, type TtsSettings } from "../types";
+import { CAST_ROLES, DEFAULT_TTS_SETTINGS, type TtsSettings } from "../types";
 import type { StorageLike } from "./settings";
 
 const KEY_PREFIX = "tts-ereader.tts.v1.";
@@ -28,7 +28,19 @@ export function mergeTtsSettings(
   if (typeof stored.rate === "number" && !Number.isNaN(stored.rate)) {
     out.rate = Math.min(2.0, Math.max(0.5, stored.rate)); // AC-303
   }
+  if (typeof stored.pitch === "number" && !Number.isNaN(stored.pitch)) {
+    out.pitch = Math.min(20, Math.max(-20, stored.pitch)); // AC-304
+  }
   if (typeof stored.autoAdvance === "boolean") out.autoAdvance = stored.autoAdvance;
+  if (typeof stored.castEnabled === "boolean") out.castEnabled = stored.castEnabled;
+  if (stored.cast && typeof stored.cast === "object") {
+    const cast: Record<string, string> = {};
+    for (const role of CAST_ROLES) {
+      const voice = (stored.cast as Record<string, unknown>)[role];
+      if (typeof voice === "string" && voice) cast[role] = voice;
+    }
+    out.cast = cast;
+  }
   return out;
 }
 

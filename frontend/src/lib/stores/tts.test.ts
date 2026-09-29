@@ -12,13 +12,19 @@ describe("mergeTtsSettings", () => {
       engine: "edge",
       voice: "da-DK-ChristelNeural",
       rate: 1.5,
+      pitch: -5,
       autoAdvance: false,
+      castEnabled: true,
+      cast: { narrator: "da-DK-JeppeNeural" },
     });
     expect(merged).toEqual({
       engine: "edge",
       voice: "da-DK-ChristelNeural",
       rate: 1.5,
+      pitch: -5,
       autoAdvance: false,
+      castEnabled: true,
+      cast: { narrator: "da-DK-JeppeNeural" },
     });
   });
 
@@ -28,14 +34,34 @@ describe("mergeTtsSettings", () => {
     expect(mergeTtsSettings(DEFAULT_TTS_SETTINGS, { rate: 0 }).rate).toBe(0.5);
   });
 
+  it("clamps pitch to -20..20 (AC-304)", () => {
+    expect(mergeTtsSettings(DEFAULT_TTS_SETTINGS, { pitch: 99 }).pitch).toBe(20);
+    expect(mergeTtsSettings(DEFAULT_TTS_SETTINGS, { pitch: -99 }).pitch).toBe(-20);
+  });
+
   it("drops invalid values", () => {
     const merged = mergeTtsSettings(DEFAULT_TTS_SETTINGS, {
       engine: "",
       voice: "",
       rate: Number.NaN,
+      pitch: Number.NaN,
     });
     expect(merged.engine).toBe(DEFAULT_TTS_SETTINGS.engine);
     expect(merged.voice).toBe(DEFAULT_TTS_SETTINGS.voice);
     expect(merged.rate).toBe(1.0);
+    expect(merged.pitch).toBe(0);
+  });
+
+  it("filters the cast to known roles with string voices (AC-305)", () => {
+    const merged = mergeTtsSettings(DEFAULT_TTS_SETTINGS, {
+      castEnabled: "yes", // invalid type: ignored
+      cast: {
+        narrator: "da-DK-JeppeNeural",
+        female_1: 42, // invalid voice: dropped
+        villain: "evil-voice", // unknown role: dropped
+      } as unknown as Record<string, string>,
+    });
+    expect(merged.castEnabled).toBe(false);
+    expect(merged.cast).toEqual({ narrator: "da-DK-JeppeNeural" });
   });
 });

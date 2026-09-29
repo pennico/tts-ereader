@@ -23,7 +23,7 @@
   import SettingsPanel from "../components/SettingsPanel.svelte";
   import SentenceContent from "../components/SentenceContent.svelte";
   import VoicePanel from "../components/VoicePanel.svelte";
-  import type { Book, ChapterMeta, TtsSettings } from "../types";
+  import type { Book, ChapterMeta, PreparedSegment, TtsSettings } from "../types";
 
   export let bookId: number;
 
@@ -65,6 +65,12 @@
 
   let sentences: ChapterSentence[] = [];
   let sentencesByPara: Map<number, ChapterSentence[]> = new Map();
+  // Voice-cast mode (M3, AC-305): prepared segments replace the chapter's
+  // own sentences as the playback + display unit.
+  let castSegments: PreparedSegment[] | null = null;
+  let castBusy = false;
+  let castError: string | null = null;
+  let labels: (string | null)[] = [];
   let audio: AudioEngine | null = null;
   let playing = false;
   let ttsBusy = false;
@@ -74,6 +80,7 @@
   let queueStart = 0; // global sentence index of queue[0]
   let queuePos = -1;
   let playToken = 0; // invalidates async continuations on stop/seek
+  let loadToken = 0; // invalidates superseded chapter loads
   let prefetching = false;
   let voiceDirty = false; // user navigated; voice must reposition
   let suppressScroll = false; // follow-voice scrolling is not user scrolling
@@ -89,17 +96,38 @@
     }
     const engineOrVoiceChanged =
       next.engine !== prevTts.engine || next.voice !== prevTts.voice;
+    const pitchChanged = next.pitch !== prevTts.pitch;
+    const castToggled = next.castEnabled !== prevTts.castEnabled;
+    const castChanged =
+      !castToggled &&
+      next.castEnabled &&
+      JSON.stringify(next.cast) !== JSON.stringify(prevTts.cast);
     const rateChanged = next.rate !== prevTts.rate;
+    const wasPlaying = playing || queuePos >= 0;
     prevTts = { ...next };
-    if (engineOrVoiceChanged) {
-      // Restart from the spoken sentence with the new engine/voice.
-      if (playing || queuePos >= 0) {
+    // Cast mode changes the content itself (prepared lines vs. original
+    // sentences), so the chapter must be rebuilt; engine/cast changes also
+    // re-resolve the prepared voices.
+    if (castToggled || (next.castEnabled && (engineOrVoiceChanged || castChanged))) {
+      void reloadForCast(wasPlaying);
+      return;
+    }
+    if (engineOrVoiceChanged || pitchChanged || castChanged) {
+      // Restart from the spoken sentence with the new engine/voice/pitch.
+      if (wasPlaying) {
         const from = activeSentence >= 0 ? activeSentence : sentenceAtOrAfter(position);
         void playFrom(from);
       }
       return;
     }
     if (rateChanged && playing) void audio?.setRate(next.rate);
+  }
+
+  /** Rebuild the chapter content after a cast/engine change (AC-305). */
+  async function reloadForCast(resume: boolean): Promise<void> {
+    const pos = position;
+    await loadChapter(chapterIndex, pos);
+    if (resume) void playFrom(sentenceAtOrAfter(pos));
   }
 
   $: isPaged = $settings.scrollMode === "paged";
@@ -129,14 +157,58 @@
   }
 
   async function loadChapter(index: number, restorePosition: number | null = null): Promise<void> {
+    const token = ++loadToken;
     stopPlayback();
     const chapter = await api.getChapter(bookId, index);
+    if (token !== loadToken) return; // superseded by a newer load
     chapterIndex = index;
-    paragraphs = chapter.text
-      .split(/\n{2,}/)
-      .map((p) => p.trim())
-      .filter((p) => p.length > 0);
-    sentences = splitChapter(paragraphs);
+    castSegments = null;
+    castError = null;
+    if ($tts.castEnabled) await loadPrepared(chapter.index);
+    if (token !== loadToken) return;
+    buildContent(chapter.text, restorePosition);
+    await tick();
+    measure();
+    if (restorePosition !== null) applyPosition(restorePosition);
+  }
+
+  /** Fetch (cached) LLM-prepared segments for the chapter (AC-305, AC-401). */
+  async function loadPrepared(chapterIndexToLoad: number): Promise<void> {
+    castBusy = true;
+    try {
+      const prepared = await api.prepareChapter(bookId, chapterIndexToLoad, {
+        engine: $tts.engine,
+        cast: $tts.cast,
+      });
+      castSegments = prepared.segments.length > 0 ? prepared.segments : null;
+    } catch (e) {
+      // e.g. MISTRAL_API_KEY missing: fall back to plain narration below.
+      castError = msg(e);
+      castSegments = null;
+    } finally {
+      castBusy = false;
+    }
+  }
+
+  /** Build paragraphs/sentences from the original text or the prepared lines. */
+  function buildContent(chapterText: string, restorePosition: number | null): void {
+    if (castSegments) {
+      paragraphs = castSegments.map((s) => s.text);
+      labels = castSegments.map((s) => s.speaker);
+      sentences = castSegments.map((s, i) => ({
+        index: i,
+        para: i,
+        text: s.text,
+        start: 0,
+      }));
+    } else {
+      paragraphs = chapterText
+        .split(/\n{2,}/)
+        .map((p) => p.trim())
+        .filter((p) => p.length > 0);
+      labels = [];
+      sentences = splitChapter(paragraphs);
+    }
     const byPara = new Map<number, ChapterSentence[]>();
     for (const s of sentences) {
       const list = byPara.get(s.para) ?? [];
@@ -146,9 +218,6 @@
     sentencesByPara = byPara;
     page = 0;
     position = restorePosition ?? 0;
-    await tick();
-    measure();
-    if (restorePosition !== null) applyPosition(restorePosition);
   }
 
   function measure(): void {
@@ -376,6 +445,11 @@
       engine: $tts.engine,
       voice: $tts.voice,
       rate: 1.0, // playback rate is applied client-side (AC-303)
+      pitch: $tts.pitch, // baked into synthesis (AC-304)
+      // Voice cast: each prepared segment reads with its own voice (AC-305).
+      ...(castSegments
+        ? { voices: idxs.map((i) => castSegments?.[i]?.voice || $tts.voice) }
+        : {}),
     });
     const items: QueueItem[] = [];
     for (let i = 0; i < segments.length; i++) {
@@ -615,7 +689,7 @@
         disabled={loading || paragraphs.length === 0}
         title="Read aloud from the current position"
       >
-        {ttsBusy ? "Loading…" : playing ? "Pause" : "Listen"}
+        {castBusy ? "Preparing…" : ttsBusy ? "Loading…" : playing ? "Pause" : "Listen"}
       </button>
       <button
         class="auto-toggle"
@@ -687,6 +761,7 @@
             <SentenceContent
               {paragraphs}
               {sentencesByPara}
+              {labels}
               activeSentence={activeSentence}
               on:tap={(e) => tapSentence(e.detail)}
             />
@@ -705,6 +780,7 @@
             <SentenceContent
               {paragraphs}
               {sentencesByPara}
+              {labels}
               activeSentence={activeSentence}
               on:tap={(e) => tapSentence(e.detail)}
             />
@@ -720,6 +796,10 @@
     </div>
     {#if ttsError}
       <span class="error" title={ttsError}>{ttsError}</span>
+    {:else if castError}
+      <span class="error" title={castError}>
+        Voice cast unavailable: {castError}
+      </span>
     {:else}
       <span class="muted">{bookPct}% of book</span>
     {/if}
