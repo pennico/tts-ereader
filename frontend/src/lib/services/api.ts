@@ -1,8 +1,10 @@
 /** Thin fetch wrapper for the backend API (ARCHITECTURE_v1 §2.2 services/api.ts). */
 import type {
   Book,
+  CastDefaults,
   ChapterMeta,
   ChapterText,
+  PreparedChapter,
   Progress,
   SynthesisSegment,
   TtsEngineInfo,
@@ -65,7 +67,13 @@ export const api = {
         (language ? `?language=${encodeURIComponent(language)}` : "")
     ),
 
-  synthesize: (body: { text: string; engine: string; voice: string; rate: number }) =>
+  synthesize: (body: {
+    text: string;
+    engine: string;
+    voice: string;
+    rate: number;
+    pitch?: number;
+  }) =>
     request<SynthesisSegment>("/tts/synthesize", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -77,10 +85,42 @@ export const api = {
     engine: string;
     voice: string;
     rate: number;
+    pitch?: number;
+    voices?: string[];
   }) =>
     request<{ segments: SynthesisSegment[] }>("/tts/synthesize-batch", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }),
+
+  // ── Voice cast + LLM preparation (M3) ───────────────────────────────────
+
+  castDefaults: (engine?: string, language?: string) =>
+    request<CastDefaults>(
+      "/tts/cast-defaults" +
+        (engine || language
+          ? `?${new URLSearchParams({
+              ...(engine ? { engine } : {}),
+              ...(language ? { language } : {}),
+            }).toString()}`
+          : "")
+    ),
+
+  prepareChapter: (
+    bookId: number,
+    index: number,
+    body: { engine: string; cast?: Record<string, string>; force?: boolean }
+  ) =>
+    request<PreparedChapter>(`/books/${bookId}/chapters/${index}/prepare`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+
+  getPreparedChapter: (bookId: number, index: number, engine?: string) =>
+    request<PreparedChapter>(
+      `/books/${bookId}/chapters/${index}/prepared` +
+        (engine ? `?engine=${encodeURIComponent(engine)}` : "")
+    ),
 };

@@ -37,6 +37,18 @@ from pydub import AudioSegment
 
 from poc_reader import chunk_text, extract_epub_chapter, list_epub_chapters
 
+# Shared preparation + voice-cast logic (M3, AC-803): the canonical code lives
+# in shared/ and is reused by the v1 app; the v0 CLI surface is unchanged.
+from shared.text_preparation import llm_prepare, parse_lines, split_long_narration
+from shared.voice_cast import (
+    CAST_EDGE_IT,
+    ROLE_FEMALE_1,
+    ROLE_FEMALE_OTHER,
+    ROLE_MALE_SHORT,
+    ROLE_NARRATOR,
+    assign_voices as _assign_voices,
+)
+
 SCRIPT_DIR = Path(__file__).resolve().parent
 
 LLM_MODEL_DEFAULT = "mistral-large-latest"
@@ -45,22 +57,18 @@ WORKERS_DEFAULT = 4  # concurrent edge-tts requests (edge-tts is free; be polite
 GAP_SAME_MS = 250    # silence between consecutive lines of the same voice
 GAP_SWITCH_MS = 600  # silence at a voice change
 
-VOICE_NARRATOR = "it-IT-GiuseppeMultilingualNeural"
-VOICE_FEMALE_1 = "fr-FR-VivienneMultilingualNeural"
-VOICE_FEMALE_2 = "en-US-EmmaMultilingualNeural"
-VOICE_SHORT_MALE = "en-US-AndrewMultilingualNeural"
+# v0 voice cast (Italian, edge-tts) — kept as module constants for callers.
+VOICE_NARRATOR, VOICE_FEMALE_1, VOICE_FEMALE_2, VOICE_SHORT_MALE = (
+    CAST_EDGE_IT[ROLE_NARRATOR][0],
+    CAST_EDGE_IT[ROLE_FEMALE_1][0],
+    CAST_EDGE_IT[ROLE_FEMALE_OTHER][0],
+    CAST_EDGE_IT[ROLE_MALE_SHORT][0],
+)
 
-PREPARE_PROMPT = """Sei un preparatore di testi per la sintesi vocale (TTS) in italiano.
-Il testo è tratto da "Storia dell'assedio di Lisbona" di José Saramago, traduzione italiana di Rita Desti.
-Lo stile di Saramago ha periodi lunghissimi con catene di virgole e dialoghi incorporati nella narrazione senza virgolette.
 
-Prepara il testo per essere letto ad alta voce in italiano:
-1. PULIZIA: correggi gli evidenti errori di OCR e di ortografia (parole fuse o spezzate, lettere scambiate, accenti mancanti), senza cambiare lo stile né le parole di contenuto. Se una parola è corretta ma rara, lasciala com'è.
-2. PUNTEGGIATURA PER IL PARLATO: conserva il ritmo fluido dell'autore, ma dove una catena di virgole renderebbe la lettura a scatti, unisci le clausole brevi in un respiro solo, oppure usa un punto dove termina davvero un pensiero completo, così la voce assume contorni intonativi naturali invece di abbassarsi su ogni virgola.
-3. DIALOGHI: metti le parole pronunciate da ciascun personaggio su una riga propria, prefissata dal nome del personaggio in maiuscolo, seguito da [f] o [m] e da due punti (per esempio "MADONNA [f]:"). Le clausole di regia ("gli disse", "domandò", "rispose") restano nella narrazione.
-4. Scrivi i numeri in lettere, sviluppa le abbreviazioni ed elimina i riferimenti a note a piè di pagina (come [3]).
-5. Rimuovi anche il corpo delle note a piè di pagina quando è incorporato nel flusso del testo: i passaggi che iniziano con un numero seguito da un trattino, per esempio "3 - Narra la leggenda che...". Questi passaggi non devono essere letti ad alta voce.
-6. Non aggiungere, togliere o cambiare nessuna parola di contenuto. Restituisci solo il testo preparato, senza commenti né intestazioni."""
+def assign_voices(lines, andrew_short=False):
+    """Two-pass voice assignment. Returns list of (speaker, gender, text, voice, voice_name)."""  # noqa: E501
+    return _assign_voices(lines, cast=CAST_EDGE_IT, andrew_short=andrew_short)
 
 
 def load_env():
@@ -73,135 +81,6 @@ def load_env():
             line = line.strip()
             if line.startswith("MISTRAL_API_KEY="):
                 os.environ["MISTRAL_API_KEY"] = line.split("=", 1)[1].strip()
-
-
-def llm_prepare(client, model, text, retries=3):
-    """One LLM call per chunk: clean + repunctuate + speaker tags."""
-    for attempt in range(retries):
-        try:
-            response = client.chat.complete(
-                model=model,
-                messages=[{"role": "user", "content": PREPARE_PROMPT + "\n\n---\n\n" + text}],
-            )
-            content = response.choices[0].message.content.strip()
-            # Guard against markdown fences or preambles
-            if content.startswith("```"):
-                content = re.sub(r"^```[a-z]*\n?|\n?```$", "", content).strip()
-            # Drop a leading preamble line ("Ecco il testo preparato...:")
-            # unless it looks like a speaker tag (all-caps name, [f]/[m])
-            lines = content.split("\n")
-            first = lines[0].strip()
-            if first.endswith(":") and not first.isupper() \
-                    and not re.search(r"\[[fm]\]:$", first):
-                content = "\n".join(lines[1:]).strip()
-            # Drop standalone separator lines ("---")
-            content = re.sub(r"(?m)^\s*-{3,}\s*$", "", content).strip()
-            return content
-        except Exception as e:
-            if attempt == retries - 1:
-                raise
-            print(f"  LLM call failed ({e}), retrying in {2 ** attempt}s...")
-            time.sleep(2 ** attempt)
-
-
-def parse_lines(prepared):
-    """Split prepared text into (speaker, gender, text) lines.
-
-    Handles both 'NAME [f]: text' on one line and the two-line format where
-    'NAME [f]:' stands alone and the dialogue follows on the next line.
-    Speaker labels are voice switches, never spoken.
-    """
-    name_pat = r"[A-ZÀÈÉÌÒÙ' ]{2,}"
-    lines = []
-    pending = None  # (speaker, gender) awaiting its text line
-    for raw in prepared.split("\n"):
-        line = raw.strip()
-        if not line:
-            continue
-        m = re.match(rf"^({name_pat}?)\s*\[([fm])\]:\s*(.+)$", line)
-        if m:
-            speaker = m.group(1).strip() or "dialogo"
-            lines.append((speaker, m.group(2), m.group(3).strip()))
-            pending = None
-            continue
-        m = re.match(rf"^({name_pat}?)\s*\[([fm])\]:$", line)
-        if m:
-            pending = ((m.group(1).strip() or "dialogo"), m.group(2))
-            continue
-        # Untagged speaker label (no gender) — treat as narration-side dialogue
-        m = re.match(rf"^({name_pat}):$", line)
-        if m:
-            pending = (m.group(1).strip(), None)
-            continue
-        m = re.match(rf"^({name_pat}):\s*(.+)$", line)
-        if m:
-            lines.append((m.group(1).strip(), None, m.group(2).strip()))
-            pending = None
-            continue
-        speaker, gender = pending if pending else (None, None)
-        lines.append((speaker, gender, line))
-        pending = None
-    return lines
-
-
-def split_long_narration(lines, max_chars=300):
-    """Split long narration lines at sentence boundaries for finer highlighting."""
-    out = []
-    for speaker, gender, text in lines:
-        if speaker or len(text) <= max_chars:
-            out.append((speaker, gender, text))
-            continue
-        sentences = re.split(r"(?<=[.!?])\s+", text)
-        buf = ""
-        for sentence in sentences:
-            if buf and len(buf) + len(sentence) > max_chars:
-                out.append((None, None, buf.strip()))
-                buf = sentence
-            else:
-                buf = (buf + " " + sentence).strip()
-        if buf:
-            out.append((None, None, buf.strip()))
-    return out
-
-
-def assign_voices(lines, andrew_short=False):
-    """Two-pass voice assignment. Returns list of (speaker, gender, text, voice, voice_name)."""
-    # Pass 1: per-character stats in order of first appearance
-    stats = {}  # name -> {"gender": g, "lines": n, "chars": total}
-    order = []
-    for speaker, gender, text in lines:
-        if not speaker:
-            continue
-        if speaker not in stats:
-            stats[speaker] = {"gender": gender, "lines": 0, "chars": 0}
-            order.append(speaker)
-        stats[speaker]["lines"] += 1
-        stats[speaker]["chars"] += len(text)
-        if gender:
-            stats[speaker]["gender"] = gender
-
-    female_assigned = []
-    for speaker in order:
-        if stats[speaker]["gender"] == "f":
-            female_assigned.append(speaker)
-
-    def voice_for(speaker, text):
-        if not speaker:
-            return VOICE_NARRATOR, "Giuseppe"
-        s = stats[speaker]
-        if s["gender"] == "f":
-            if speaker == female_assigned[0]:
-                return VOICE_FEMALE_1, "Vivienne"
-            return VOICE_FEMALE_2, "Emma"
-        # male or unknown gender
-        if andrew_short and s["lines"] == 1 and len(text) < 80:
-            return VOICE_SHORT_MALE, "Andrew"
-        return VOICE_NARRATOR, "Giuseppe"
-
-    return [
-        (speaker, gender, text) + voice_for(speaker, text)
-        for speaker, gender, text in lines
-    ]
 
 
 async def synthesize(segments, output_dir, rate, workers=WORKERS_DEFAULT):

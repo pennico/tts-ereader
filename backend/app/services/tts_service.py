@@ -107,9 +107,17 @@ async def synthesize_batch(
     engine_name: Optional[str] = None,
     rate: float = 1.0,
     pitch: float = 0.0,
+    voices: Optional[List[str]] = None,
 ) -> List[dict]:
-    """Synthesize a window of sentences (the reader's playback unit)."""
+    """Synthesize a window of sentences (the reader's playback unit).
+
+    voices (AC-305): optional per-text voice overrides for voice-cast
+    playback; texts without an entry fall back to `voice`.
+    """
     out = []
-    for text in texts:
-        out.append(await synthesize(settings, text, voice, engine_name, rate, pitch))
+    for i, text in enumerate(texts):
+        text_voice = voices[i] if voices and i < len(voices) and voices[i] else voice
+        out.append(
+            await synthesize(settings, text, text_voice, engine_name, rate, pitch)
+        )
     return out
