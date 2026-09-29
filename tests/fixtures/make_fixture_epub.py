@@ -51,8 +51,12 @@ CHAPTER_XHTML = """<?xml version="1.0" encoding="UTF-8"?>
 """
 
 
-def _opf(title: str, author: str, language: str, chapters: list) -> str:
+def _opf(title: str, author: str, language: str, chapters: list, cover: str | None = None) -> str:
     manifest = ['    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>']
+    if cover:
+        manifest.append(
+            f'    <item id="cover-image" href="{cover}" media-type="image/png" properties="cover-image"/>'
+        )
     spine = []
     for fname, _chapter_title, _paras in chapters:
         item_id = fname.stem
@@ -82,18 +86,53 @@ def _chapter_body(paragraphs: list) -> str:
     return "\n".join(f"    <p>{p}</p>" if p else "    <p></p>" for p in paragraphs)
 
 
-def write_epub(path: Path, title: str, author: str, language: str, chapters: list) -> Path:
+def _tiny_png(width: int, height: int, rgb: tuple) -> bytes:
+    """Minimal valid PNG (stdlib only) used as a synthetic cover image."""
+    import struct
+    import zlib
+
+    def chunk(tag: bytes, data: bytes) -> bytes:
+        return (
+            struct.pack(">I", len(data))
+            + tag
+            + data
+            + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+        )
+
+    raw = b"".join(
+        b"\x00" + bytes(rgb) * width for _ in range(height)
+    )
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(raw))
+        + chunk(b"IEND", b"")
+    )
+
+
+def write_epub(
+    path: Path,
+    title: str,
+    author: str,
+    language: str,
+    chapters: list,
+    cover: bool = False,
+) -> Path:
     """Write a synthetic EPUB 3.
 
     chapters: list of (filename, chapter_title, [paragraphs]) — paragraphs may
-    contain "" for the empty-paragraph edge case.
+    contain "" for the empty-paragraph edge case. cover=True embeds a tiny
+    generated PNG declared with the EPUB3 cover-image property.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
+    cover_href = "cover.png" if cover else None
     with zipfile.ZipFile(path, "w") as z:
         # mimetype must be the first entry, uncompressed (EPUB spec)
         z.writestr(zipfile.ZipInfo("mimetype"), "application/epub+zip", zipfile.ZIP_STORED)
         z.writestr("META-INF/container.xml", CONTAINER_XML)
-        z.writestr("OEBPS/content.opf", _opf(title, author, language, chapters))
+        z.writestr("OEBPS/content.opf", _opf(title, author, language, chapters, cover_href))
+        if cover:
+            z.writestr("OEBPS/cover.png", _tiny_png(64, 96, (63, 81, 120)))
         nav_items = "\n".join(
             f'      <li><a href="{fname.name}">{chapter_title}</a></li>'
             for fname, chapter_title, _paras in chapters
@@ -172,7 +211,15 @@ def make_plain_narration_epub(language: str, word_count: int, out_dir: Path) -> 
         (Path("chapter1.xhtml"), "Chapter 1", paras[: len(paras) // 2]),
         (Path("chapter2.xhtml"), "Chapter 2", paras[len(paras) // 2 :]),
     ]
-    return write_epub(out_dir / f"plain_{language}.epub", title, "Fixture Author", lang, chapters)
+    # The Italian plain-narration fixture carries a cover (AC-002 test path).
+    return write_epub(
+        out_dir / f"plain_{language}.epub",
+        title,
+        "Fixture Author",
+        lang,
+        chapters,
+        cover=(language == "it"),
+    )
 
 
 def make_dialogue_epub(language: str, dialogue_ratio: float, out_dir: Path) -> Path:

@@ -1,13 +1,18 @@
 """FastAPI entry point: CORS, routers, health check (ARCHITECTURE_v1 §2.1)."""
 from __future__ import annotations
 
+import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.api import library, reader
 from app.core.database import init_db
+
+FRONTEND_DIST = Path(os.environ.get("TTSEREADER_FRONTEND_DIST", "frontend/dist"))
 
 
 @asynccontextmanager
@@ -30,6 +35,12 @@ def create_app() -> FastAPI:
     @app.get("/api/health")
     def health():
         return {"status": "ok"}
+
+    # Serve the built frontend when it exists (local-first single-server
+    # deployment, ARCHITECTURE_v1 §6). Registered last so API routes (including
+    # /api/health above) take precedence; html=True gives the SPA fallback.
+    if FRONTEND_DIST.is_dir():
+        app.mount("/", StaticFiles(directory=FRONTEND_DIST, html=True), name="frontend")
 
     return app
 

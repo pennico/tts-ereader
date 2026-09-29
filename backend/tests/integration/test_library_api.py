@@ -102,6 +102,20 @@ def test_delete_book(client, fixture_epubs):
     assert resp.status_code == 404
 
 
+def test_cover_endpoint(client, fixture_epubs):
+    """AC-002: covers are served for books that have one, 404 otherwise."""
+    with_cover = _import(client, fixture_epubs["plain_it"]).json()["id"]
+    without_cover = _import(client, fixture_epubs["plain_da"]).json()["id"]
+
+    resp = client.get(f"/api/books/{with_cover}/cover")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("image/png")
+    assert resp.content[:8] == b"\x89PNG\r\n\x1a\n"
+
+    assert client.get(f"/api/books/{without_cover}/cover").status_code == 404
+    assert client.get("/api/books/999/cover").status_code == 404
+
+
 def test_missing_book_404(client):
     assert client.get("/api/books/999").status_code == 404
     assert client.get("/api/books/999/chapters").status_code == 404
