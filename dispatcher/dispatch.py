@@ -104,8 +104,9 @@ Read AGENTS.md first. Open pull requests need review. For each open PR
   or API keys committed, no audio files or copyrighted books, v0 CLI
   scripts still working, no invented live-test results.
 - Run the project's tests if present; keep total runtime under ~25 minutes.
-- If the PR is good: `gh label create approved --color 0E8A16 2>/dev/null || true`
-  then `gh pr edit N --add-label approved`.
+- If the PR is good: `gh pr ready N` (if still a draft), then
+  `gh label create approved --color 0E8A16 2>/dev/null || true` and
+  `gh pr edit N --add-label approved`.
 - If the PR has problems: `gh pr review N --comment --body "..."` with
   concrete findings, and do NOT add the label. If the problems need an
   owner decision, say so explicitly in the comment.
@@ -169,7 +170,7 @@ def ensure_labels():
 
 
 def open_prs():
-    return gh_json(["gh", "pr", "list", "--json", "number,title,labels,url"])
+    return gh_json(["gh", "pr", "list", "--json", "number,title,labels,url,isDraft"])
 
 
 def checks_pass(number):
@@ -180,7 +181,12 @@ def checks_pass(number):
     return "no checks reported" in (r.stderr or "")
 
 
-def merge(number, title):
+def merge(number, title, is_draft=False):
+    if is_draft:
+        ready = run(["gh", "pr", "ready", str(number)])
+        if ready.returncode != 0:
+            log(f"could not mark PR #{number} ready: {ready.stderr.strip()[:200]}")
+            return False
     r = run(["gh", "pr", "merge", str(number), "--squash", "--delete-branch"], timeout=180)
     if r.returncode == 0:
         log(f"merged PR #{number}: {title}")
@@ -382,7 +388,7 @@ def tick(dry):
             log(f"PR #{p['number']} approved + green: merge")
             if dry:
                 continue
-            if merge(p["number"], p["title"]):
+            if merge(p["number"], p["title"], p.get("isDraft", False)):
                 state["qa_strikes"].pop(str(p["number"]), None)
                 state["approved_prs"] = [n for n in state["approved_prs"]
                                          if n != p["number"]]
