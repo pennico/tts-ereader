@@ -14,3 +14,5 @@ voices/*.mp3
 voices/*.wav
 samples/*.epub
 dispatcher/state.json
+data/
+.pytest_cache/
