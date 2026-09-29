@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.api import library, reader
+from app.api import library, reader, tts
 from app.core.database import init_db
 
 FRONTEND_DIST = Path(os.environ.get("TTSEREADER_FRONTEND_DIST", "frontend/dist"))
@@ -31,6 +31,7 @@ def create_app() -> FastAPI:
     )
     app.include_router(library.router)
     app.include_router(reader.router)
+    app.include_router(tts.router)
 
     @app.get("/api/health")
     def health():

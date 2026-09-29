@@ -8,7 +8,9 @@ from sqlmodel import Field, SQLModel
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    # Timezone-aware: SQLModel's datetime columns are DateTime(timezone=True),
+    # and SQLAlchemy >= 2.0.36 rejects naive datetimes for those.
+    return datetime.now(timezone.utc)
 
 
 class Book(SQLModel, table=True):
