@@ -4,7 +4,10 @@ from __future__ import annotations
 import zipfile
 from typing import List, Optional
 
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 
@@ -90,6 +93,28 @@ def delete_book(
     if not library_service.delete_book(session, settings, book_id):
         raise HTTPException(status_code=404, detail=f"book {book_id} not found")
     return {"ok": True}
+
+
+@router.get("/{book_id}/cover")
+def get_cover(
+    book_id: int,
+    session: Session = Depends(get_session),
+):
+    """Serve the stored cover image (AC-002)."""
+    book = _require_book(session, book_id)
+    if not book.cover_path:
+        raise HTTPException(status_code=404, detail=f"book {book_id} has no cover")
+    path = Path(book.cover_path)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail=f"cover file missing for book {book_id}")
+    media_type = {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".gif": "image/gif",
+        ".img": "application/octet-stream",
+    }.get(path.suffix.lower(), "application/octet-stream")
+    return FileResponse(path, media_type=media_type)
 
 
 @router.get("/{book_id}/progress", response_model=ProgressIn)
