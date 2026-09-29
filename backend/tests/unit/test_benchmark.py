@@ -98,6 +98,43 @@ async def test_report_and_table(registry, tmp_path: Path):
     assert "unavailable" in skip_table
 
 
+@pytest.mark.asyncio
+async def test_run_benchmark_bad_voice_name_does_not_abort(registry, tmp_path: Path):
+    factory.register(MockTTSEngine())
+    rows = await benchmark_tts.run_benchmark(
+        ["mock"],
+        {"it": "Ciao."},
+        tmp_path,
+        voices_override={"mock": ["ok-voice", "bad/voice"]},
+    )
+    # Every requested combination gets a row; a path separator in a voice
+    # name is sanitized in the filename instead of crashing the run.
+    assert len(rows) == 2
+    assert all(r["status"] == "ok" for r in rows)
+    assert all((tmp_path / r["audio_file"]).exists() for r in rows)
+    assert "/" not in rows[1]["audio_file"]
+
+
+@pytest.mark.asyncio
+async def test_run_benchmark_records_unexpected_crash_as_error(
+    registry, tmp_path: Path, monkeypatch
+):
+    factory.register(MockTTSEngine())
+    engine = factory.get_engine("mock")
+
+    async def boom(text, voice, rate=1.0, pitch=0.0):
+        raise RuntimeError("synthesizer exploded")
+
+    monkeypatch.setattr(engine, "synthesize", boom)
+    rows = await benchmark_tts.run_benchmark(["mock"], {"it": "Ciao."}, tmp_path)
+    # A non-EngineError crash becomes an error row; the run and the report
+    # survive it.
+    assert len(rows) == 1
+    assert rows[0]["status"] == "error"
+    assert "synthesizer exploded" in rows[0]["error"]
+    assert benchmark_tts.write_report(rows, tmp_path).exists()
+
+
 def test_cli_main_with_mock_engine(registry, tmp_path: Path, capsys):
     factory.register(MockTTSEngine())
     out_dir = tmp_path / "bench"

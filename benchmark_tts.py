@@ -83,6 +83,11 @@ def parse_voices(spec: Optional[str]) -> Dict[str, List[str]]:
     return voices
 
 
+def _slug(part: str) -> str:
+    """Filename-safe form of a user-supplied part (voice names may contain '/')."""
+    return "".join(c if c.isalnum() or c in "-." else "_" for c in part)
+
+
 async def _voices_for(engine, lang: str, override: Dict[str, List[str]]) -> List[str]:
     """Override voices if given, else engine defaults, else list_voices()."""
     if engine.name in override:
@@ -127,34 +132,37 @@ async def run_benchmark(
                         "chars": len(text),
                         "repeat": rep,
                     }
-                    t0 = time.perf_counter()
                     try:
+                        t0 = time.perf_counter()
                         result = await engine.synthesize(text, voice)
-                    except EngineError as e:
+                        wall_s = time.perf_counter() - t0
+                        audio_s = result.duration_ms / 1000.0
+                        budget = REALTIME_BUDGET.get(name)
+                        row.update(
+                            {
+                                "status": "ok",
+                                "wall_s": round(wall_s, 3),
+                                "audio_s": round(audio_s, 3),
+                                "realtime_factor": round(wall_s / audio_s, 3) if audio_s else None,
+                                "budget": budget,
+                                "within_budget": (
+                                    wall_s / audio_s <= budget if audio_s and budget else None
+                                ),
+                                "word_boundaries": result.word_boundaries is not None,
+                                "format": result.format,
+                            }
+                        )
+                        audio_path = out_dir / f"{name}__{_slug(voice)}__{lang}__{rep}.{result.format}"
+                        audio_path.write_bytes(result.audio)
+                        row["audio_file"] = audio_path.name
+                    except Exception as e:
+                        # EngineError from the engine, OSError on the audio
+                        # write, or anything else: record an error row and keep
+                        # going — one bad combination must not lose the run.
                         row["status"] = "error"
                         row["error"] = str(e)[:300]
                         rows.append(row)
                         continue
-                    wall_s = time.perf_counter() - t0
-                    audio_s = result.duration_ms / 1000.0
-                    budget = REALTIME_BUDGET.get(name)
-                    row.update(
-                        {
-                            "status": "ok",
-                            "wall_s": round(wall_s, 3),
-                            "audio_s": round(audio_s, 3),
-                            "realtime_factor": round(wall_s / audio_s, 3) if audio_s else None,
-                            "budget": budget,
-                            "within_budget": (
-                                wall_s / audio_s <= budget if audio_s and budget else None
-                            ),
-                            "word_boundaries": result.word_boundaries is not None,
-                            "format": result.format,
-                        }
-                    )
-                    audio_path = out_dir / f"{name}__{voice}__{lang}__{rep}.{result.format}"
-                    audio_path.write_bytes(result.audio)
-                    row["audio_file"] = audio_path.name
                     rows.append(row)
     return rows
 
