@@ -65,7 +65,8 @@ python3 edge_reader.py --epub "book.epub" --chapter 4 --output-dir out/ch4
 
 Options: `--rate` (default `-8%`, softens delivery), `--model` (LLM for
 preparation, default `mistral-large-latest`), `--max-chars` (chunk size),
-`--andrew-short`. The prepared text is saved as `prepared_text.txt` so the
+`--andrew-short`, `--workers` (concurrent edge-tts requests, default 4).
+The prepared text is saved as `prepared_text.txt` so the
 cleaning/re-punctuation can be inspected before listening.
 
 ### Cost
@@ -105,7 +106,8 @@ python3 epub_mo.py --epub "book.epub" --all --output out/book_readalong.epub
 
 Options: `--rate`, `--model`, `--max-chars`, `--andrew-short` (same as
 edge_reader), plus `--slice` (chars per chapter, for testing) and `--work-dir`
-(intermediate segment files, default `out/mo_work`). The script validates its
+(intermediate segment files, default `out/mo_work`). Synthesis runs with
+`--workers` concurrent edge-tts requests (default 4). The script validates its
 own output (OPF/SMIL parse, anchors exist, clips monotonic) and reports the
 word match rate; a test slice of chapter 4 matched 94% of source words and
 clipped 50/52 fragments (the misses were the chapter number and one clause
@@ -139,7 +141,7 @@ python3 epub_readaloud.py --epub "book.epub" --all --output out/readalong.epub
 ```
 
 Same options as edge_reader (`--rate`, `--model`, `--max-chars`,
-`--andrew-short`), plus `--slice` and `--work-dir`. It also strips the book
+`--andrew-short`, `--workers`), plus `--slice` and `--work-dir`. It also strips the book
 title that leaks from the source `<title>` tag so chapters don't start with
 the title being read aloud.
 
@@ -185,6 +187,16 @@ Same options as `epub_readaloud.py`, plus `--chars-per-page` (default 900)
 and `--viewport WIDTHxHEIGHT` (default 768x1024, portrait). The script
 validates its own output (OPF/SMIL parse, anchors, clip monotonicity, plus
 fixed-layout metadata checks); unit tests in `tests/test_fixedlayout.py`.
+
+### Parallel synthesis
+
+All engines synthesize with `--workers` concurrent edge-tts requests
+(default 4; `--workers 1` restores the old sequential behavior). Segment
+order — and therefore the concatenation offsets and SMIL clips — is
+preserved regardless of worker count. On the 7-line demo book the synthesis
+stage dropped from ~13s to ~2s with 4 workers; a full book is expected to
+drop from ~1.5-2h to roughly 30-40 min. Unit tests with a mocked
+synthesizer: `tests/test_parallel_synth.py`.
 
 ### Device QA (Apple Books)
 
@@ -402,7 +414,7 @@ tts-ereader/
 
 The PoC is validated. The next phase would be:
 
-1. **Batch generation script**: Process all chapters of a book in the background, with parallel TTS workers to cut time from ~26h to ~9h.
+1. ~~**Batch generation script**: Process all chapters of a book in the background, with parallel TTS workers to cut time from ~26h to ~9h.~~ Done for the edge-tts engines: `--workers` (default 4) on all EPUB scripts; full-book generation is `--all`.
 2. **Web app (PWA)**: Chapter list with generation status, continuous text view with sentence-level highlighting, playback controls, progress tracking across chapters.
 3. **Backend**: Local FastAPI server that serves chapter list, triggers generation, and serves audio + manifests to the frontend.
 4. **On-demand generation**: User clicks a chapter, it generates in the background, becomes available when done.
