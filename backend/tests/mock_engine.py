@@ -22,6 +22,7 @@ class MockTTSEngine(TTSEngine):
     def __init__(self, fail: bool = False):
         self.fail = fail
         self.calls: List[str] = []
+        self.voice_calls: List[tuple] = []
 
     @property
     def name(self) -> str:
@@ -53,6 +54,7 @@ class MockTTSEngine(TTSEngine):
 
             raise EngineError("mock engine failure")
         self.calls.append(text)
+        self.voice_calls.append((voice, text))
         words = text.split()
         boundaries = []
         at = 0.0

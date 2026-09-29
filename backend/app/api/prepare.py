@@ -27,6 +27,7 @@ from app.core.config import Settings, get_settings
 from app.core.database import get_session
 from app.models.book import Book, Chapter
 from app.services import llm_service
+from shared.text_preparation import normalize_language
 
 router = APIRouter(prefix="/api/books/{book_id}/chapters", tags=["prepare"])
 
@@ -110,7 +111,10 @@ def prepare_chapter(
 ):
     """Prepare a chapter with the LLM and return cast-resolved segments."""
     book, chapter = _chapter_text(session, book_id, chapter_index)
-    language = book.language or llm_service.detect_language(chapter.text)
+    if book.language:
+        language = normalize_language(book.language)
+    else:
+        language = llm_service.detect_language(chapter.text)
     data = None if body.force else llm_service.load_prepared(
         settings, book_id, chapter_index
     )

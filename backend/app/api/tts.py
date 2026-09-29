@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.core.config import Settings, get_settings
 from app.engines import base as engine_base
@@ -63,6 +63,12 @@ class BatchIn(BaseModel):
     # Per-text voice overrides for voice-cast playback (AC-305); parallel to
     # texts, empty entries fall back to `voice`.
     voices: Optional[List[str]] = None
+
+    @model_validator(mode="after")
+    def _voices_match_texts(self):
+        if self.voices is not None and len(self.voices) != len(self.texts):
+            raise ValueError("voices must be parallel to texts (same length)")
+        return self
 
 
 class CastRoleOut(BaseModel):
