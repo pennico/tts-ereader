@@ -9,4 +9,4 @@ uses ([arch] architecture, [impl] implementation).
 - [x] [impl] M1: Library + reader view (fonts, themes, scroll + paginated modes, progress persistence)
 - [x] [impl] M2: TTSEngine interface + Gemini adapter (primary) + edge-tts adapter + voice-by-progression (highlight sync, tap-to-read, voice-driven auto-advance)
 - [x] [impl] M3: Voice tuning UI + LLM preparation integration (Italian + Danish)
-- [ ] [impl] M4: Docker deployment for homelab + benchmark harness + docs
+- [x] [impl] M4: Docker deployment for homelab + benchmark harness + docs

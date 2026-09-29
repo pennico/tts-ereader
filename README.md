@@ -9,7 +9,7 @@ An AI-powered text-to-speech system that analyzes text for characters, emotion, 
 - **Italian (edge-tts hybrid)**: Good quality. `edge_reader.py` pairs Mistral LLM text preparation (cleaning, re-punctuation for speech, speaker tagging) with free Microsoft edge-tts neural voices. See "edge_reader" below.
 - **Danish**: Not supported by Voxtral. Included as a test case only.
 - **EPUB support**: Working. Text is extracted, chunked, analyzed, and synthesized per chapter.
-- **v1 (in progress)**: the reader app is specified and architected — see `PLAN_v1_reader.md`, `docs/SPEC_v1.md`, and `docs/ARCHITECTURE_v1.md`. M1 (library + reader view), M2 (TTS engines + voice-by-progression), and M3 (voice tuning + LLM preparation with per-book voice casts) are implemented; milestones M1–M4 are tracked in `ROADMAP.md`.
+- **v1 (in progress)**: the reader app is specified and architected — see `PLAN_v1_reader.md`, `docs/SPEC_v1.md`, and `docs/ARCHITECTURE_v1.md`. M1 (library + reader view), M2 (TTS engines + voice-by-progression), M3 (voice tuning + LLM preparation with per-book voice casts), and M4 (Docker deployment + benchmark harness + docs) are implemented; see `ROADMAP.md`.
 
 ## Architecture
 
@@ -378,6 +378,9 @@ Enhanced is more expressive but can feel over-emphasized for nonfiction. Basic i
 tts-ereader/
 ├── poc_reader.py          # Main pipeline script (CLI, Voxtral engine)
 ├── edge_reader.py         # edge-tts hybrid engine (LLM prep + free edge voices)
+├── benchmark_tts.py       # TTS engine benchmark harness (owner-run, real keys)
+├── Dockerfile             # Multi-stage image: frontend build + FastAPI runtime (M4)
+├── docker-compose.yml     # Homelab deployment: port 8000, ./data volume, healthcheck (M4)
 ├── epub_mo.py             # EPUB 3 Media Overlays generator (overlays on original XHTML)
 ├── epub_readaloud.py      # Simple read-along EPUB from prepared text (recommended)
 ├── epub_fixedlayout.py    # Fixed-layout read-along EPUB (Apple Books route)
@@ -410,7 +413,7 @@ tts-ereader/
     └── ggs_ch3/           # Guns, Germs, and Steel preface
 ```
 
-## v1 reader app (M1: library + reader; M2: TTS + read-along; M3: voice tuning + LLM preparation)
+## v1 reader app (M1–M4: library + reader, TTS + read-along, voice tuning + LLM preparation, Docker + benchmark + docs)
 
 The v1 app is in `backend/` (FastAPI + SQLite via SQLModel) and `frontend/`
 (Svelte 4 + Vite + TypeScript), per `docs/ARCHITECTURE_v1.md`. M1 delivers:
@@ -498,8 +501,29 @@ cd frontend && npm run build
 cd .. && python3 -m uvicorn app.main:app --app-dir backend
 ```
 
-Not yet implemented: Docker deployment + benchmark harness (M4) — see
-`ROADMAP.md`.
+M4 makes it deployable and benchmarkable:
+
+- Docker deployment for the homelab: multi-stage `Dockerfile` (frontend
+  bundle → `python:3.11-slim` + ffmpeg runtime) and `docker-compose.yml`
+  with a single `./data` bind mount for all persisted state, `.env`
+  passthrough, healthcheck, and `restart: unless-stopped`. Runbook:
+  `docs/DEPLOYMENT.md`.
+- Enriched `GET /api/health`: version, data-dir writability, default
+  engine, and per-engine availability — always 200 while the process is
+  up, degraded states in the body.
+- Benchmark harness (`benchmark_tts.py`, owner-run with real keys): the
+  same Italian/Danish passages through every engine and voice, one audio
+  file per combination for A/B listening, and wall-time vs audio duration
+  against the acceptance budgets (edge-tts < 2x, Gemini < 1.5x). Covered
+  in the sandbox by unit tests against the mock engine.
+- Offline indicator in the app shell (red banner when the server is
+  unreachable).
+- Docs: `docs/DEPLOYMENT.md` (homelab runbook), `docs/USER_GUIDE.md`,
+  `docs/DEVELOPER_GUIDE.md`.
+
+The Docker image itself was not built in the cloud sandbox (no Docker
+daemon, 30s command limit) — the first `docker compose up -d --build` on
+the homelab is the owner's smoke test.
 
 ## Technical notes
 
