@@ -86,3 +86,43 @@ def test_cli_list_chapters(tmp_path, capsys, monkeypatch):
     out = capsys.readouterr().out
     assert "[ 0]" in out
     assert "chars" in out
+
+
+class _FakeMessage:
+    def __init__(self, content):
+        self.content = content
+
+
+class _FakeChoice:
+    def __init__(self, content):
+        self.message = _FakeMessage(content)
+
+
+class _FakeResponse:
+    def __init__(self, content):
+        self.choices = [_FakeChoice(content)]
+
+
+class _FakeClient:
+    def __init__(self, content):
+        self._content = content
+        self.chat = self
+
+    def complete(self, model, messages):
+        return _FakeResponse(self._content)
+
+
+def test_llm_prepare_strips_markdown_emphasis():
+    """Markdown emphasis the model adds (*parola*) must not reach the
+    engines: the read-along build read asterisks aloud (owner report,
+    Saramago full-book run 2026-09-19)."""
+    raw = ("Il correttore sta leggendo *Storia dell'assedio di Lisbona*, "
+           "e la parola è *sì*, che cambia in *no*.\n"
+           "MADONNA [f]: Chi è là?")
+    out = text_preparation.llm_prepare(_FakeClient(raw), "mistral-large-latest",
+                                       "testo grezzo", language="it")
+    assert "*" not in out
+    assert "Storia dell'assedio di Lisbona," in out
+    assert "sì," in out
+    assert "no." in out
+    assert "MADONNA [f]: Chi è là?" in out

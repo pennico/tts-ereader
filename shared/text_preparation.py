@@ -25,7 +25,8 @@ Prepara il testo per essere letto ad alta voce in italiano:
 3. DIALOGHI: metti le parole pronunciate da ciascun personaggio su una riga propria, prefissata dal nome del personaggio in maiuscolo, seguito da [f] o [m] e da due punti (per esempio "MADONNA [f]:"). Le clausole di regia ("gli disse", "domandò", "rispose") restano nella narrazione.
 4. Scrivi i numeri in lettere, sviluppa le abbreviazioni ed elimina i riferimenti a note a piè di pagina (come [3]).
 5. Rimuovi anche il corpo delle note a piè di pagina quando è incorporato nel flusso del testo: i passaggi che iniziano con un numero seguito da un trattino, per esempio "3 - Narra la leggenda che...". Questi passaggi non devono essere letti ad alta voce.
-6. Non aggiungere, togliere o cambiare nessuna parola di contenuto. Restituisci solo il testo preparato, senza commenti né intestazioni."""
+6. Non aggiungere, togliere o cambiare nessuna parola di contenuto. Restituisci solo il testo preparato, senza commenti né intestazioni.
+7. Non usare mai asterischi, sottolineature o marcature markdown di alcun tipo: il testo va letto da una sintesi vocale, che leggerebbe i simboli ad alta voce."""
 
 PREPARE_PROMPT_DA = """Du er en tekstforbereder til talesyntese (TTS) på dansk.
 Teksten er trukket fra "Alfabethuset" af Jussi Adler-Olsen.
@@ -37,7 +38,8 @@ Forbered teksten til at blive læst højt på dansk:
 3. DIALOG: sæt hver persons replik på sin egen linje, foranstillet med personens navn med store bogstaver, efterfulgt af [f] eller [m] og et kolon (for eksempel "MARCUS [m]:"). Regibemærkninger ("sagde han", "spurgte hun", "svarede han") forbliver i fortællingen.
 4. Skriv tal med bogstaver, fold forkortelser ud, og fjern henvisninger til fodnoter (som [3]).
 5. Fjern også selve fodnoteteksten når den er indarbejdet i tekstens strøm: passager der begynder med et tal efterfulgt af en tankestreg, for eksempel "3 - Ifølge sagnet...". Disse passager skal ikke læses højt.
-6. Tilføj, fjern eller ændr ingen indholdsord. Bevar fremmedord og citater på andre sprog uændret. Returnér kun den forberedte tekst, uden kommentarer eller overskrifter."""
+6. Tilføj, fjern eller ændr ingen indholdsord. Bevar fremmedord og citater på andre sprog uændret. Returnér kun den forberedte tekst, uden kommentarer eller overskrifter.
+7. Brug aldrig asterisker, understregninger eller markdown-formatering i nogen form: teksten læses af en talesyntese, som ville læse symbolerne højt."""
 
 PREPARE_PROMPT_EN = """You are a text preparer for text-to-speech (TTS).
 Prepare the text to be read aloud:
@@ -45,7 +47,8 @@ Prepare the text to be read aloud:
 2. PUNCTUATION FOR SPEECH: keep the author's flowing rhythm, but where a chain of commas makes delivery choppy, merge short clauses into one breath, or use a full stop where a thought truly ends.
 3. DIALOGUE: put each character's spoken words on their own line, prefixed with the character's name in uppercase, followed by [f] or [m] and a colon (for example "ANNA [f]:"). Stage directions ("he said", "she asked") stay in the narration.
 4. Write numbers as words, expand abbreviations, and drop footnote references (like [3]) and footnote bodies embedded in the text flow.
-5. Do not add, remove, or change any content words. Keep foreign words and quotes in other languages unchanged. Return only the prepared text, no comments or headers."""
+5. Do not add, remove, or change any content words. Keep foreign words and quotes in other languages unchanged. Return only the prepared text, no comments or headers.
+6. Never use asterisks, underscores, or markdown formatting of any kind: the text is read by a speech synthesizer, which would read the symbols aloud."""
 
 PREPARE_PROMPTS = {"it": PREPARE_PROMPT_IT, "da": PREPARE_PROMPT_DA}
 DEFAULT_LANGUAGE = "en"
@@ -116,6 +119,11 @@ def llm_prepare(client, model, text, retries=3, language="it"):
                 content = "\n".join(lines[1:]).strip()
             # Drop standalone separator lines ("---")
             content = re.sub(r"(?m)^\s*-{3,}\s*$", "", content).strip()
+            # Strip markdown emphasis the model sometimes adds despite the
+            # prompt (*parola* -> parola); asterisks are never spoken
+            # content in this pipeline and were read aloud by the engines.
+            content = re.sub(r"\*+([^*\n]+)\*+", r"\1", content)
+            content = content.replace("*", "")
             return content
         except Exception as e:
             if attempt == retries - 1:
