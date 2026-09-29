@@ -32,6 +32,53 @@ export type ThemeName = "light" | "dark" | "sepia" | "custom";
 export type FontFamily = "serif" | "sans-serif" | "monospace";
 export type ScrollMode = "scroll" | "paged";
 
+/** TTS types mirroring backend/app/api/tts.py (M2). */
+export interface TtsEngineInfo {
+  name: string;
+  display_name: string;
+  available: boolean;
+  is_default: boolean;
+}
+
+export interface TtsVoiceInfo {
+  name: string;
+  display_name: string;
+  gender: string;
+  locale: string;
+}
+
+export interface WordBoundary {
+  word: string;
+  start_ms: number;
+  end_ms: number;
+}
+
+export interface SynthesisSegment {
+  text: string;
+  engine: string;
+  cached: boolean;
+  audio_b64: string;
+  format: string;
+  sample_rate: number;
+  duration_ms: number;
+  word_boundaries: WordBoundary[] | null;
+}
+
+/** Per-book voice settings (AC-301..AC-303), persisted locally per book. */
+export interface TtsSettings {
+  engine: string;
+  voice: string;
+  rate: number; // 0.5..2.0 (AC-303)
+  autoAdvance: boolean; // voice-driven auto progression (AC-205)
+}
+
+export const DEFAULT_TTS_SETTINGS: TtsSettings = {
+  engine: "gemini",
+  voice: "Kore",
+  rate: 1.0,
+  autoAdvance: true,
+};
+
 /** Reader display + behavior preferences (AC-101..AC-113), persisted locally. */
 export interface ReaderSettings {
   theme: ThemeName;

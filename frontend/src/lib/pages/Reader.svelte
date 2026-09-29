@@ -2,10 +2,15 @@
   import { onDestroy, onMount, tick } from "svelte";
   import { api } from "../services/api";
   import { settings } from "../stores/settings";
+  import { browserStorage, createTtsStore } from "../stores/tts";
+  import { AudioEngine, type AudioBufferLike } from "../services/audioEngine";
+  import { nextWindow } from "../services/sync";
+  import { splitChapter, sentencePosition, type ChapterSentence } from "../utils/sentences";
   import {
     COLUMN_GAP,
     clampPage,
     nextPage,
+    pageAtOffset,
     pageCount,
     pageOffset,
     pageToPosition,
@@ -16,7 +21,9 @@
   import { FONT_STACKS } from "../utils/themes";
   import ChapterNav from "../components/ChapterNav.svelte";
   import SettingsPanel from "../components/SettingsPanel.svelte";
-  import type { Book, ChapterMeta } from "../types";
+  import SentenceContent from "../components/SentenceContent.svelte";
+  import VoicePanel from "../components/VoicePanel.svelte";
+  import type { Book, ChapterMeta, TtsSettings } from "../types";
 
   export let bookId: number;
 
@@ -35,11 +42,65 @@
   let page = 0;
   let position = 0; // 0..1 within the chapter — source of truth for progress
   let showSettings = false;
+  let showVoice = false;
 
   let autoTimer: ReturnType<typeof setInterval> | null = null;
   let rafId: number | null = null;
   let lastFrame = 0;
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // ── Voice-by-progression state (M2) ──────────────────────────────────────
+  // Playback unit is the sentence: the chapter is split into sentences, a
+  // window of them is synthesized per batch request, and the spoken sentence
+  // is highlighted while the view follows the voice.
+
+  const WINDOW_SENTENCES = 12;
+  const WINDOW_CHARS = 3000;
+
+  interface QueueItem {
+    sentence: number; // global sentence index
+    buffer: AudioBufferLike;
+    durationMs: number;
+  }
+
+  let sentences: ChapterSentence[] = [];
+  let sentencesByPara: Map<number, ChapterSentence[]> = new Map();
+  let audio: AudioEngine | null = null;
+  let playing = false;
+  let ttsBusy = false;
+  let ttsError: string | null = null;
+  let activeSentence = -1; // global index of the spoken sentence
+  let queue: QueueItem[] = [];
+  let queueStart = 0; // global sentence index of queue[0]
+  let queuePos = -1;
+  let playToken = 0; // invalidates async continuations on stop/seek
+  let prefetching = false;
+  let voiceDirty = false; // user navigated; voice must reposition
+  let suppressScroll = false; // follow-voice scrolling is not user scrolling
+  let repositionTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const tts = createTtsStore(bookId, browserStorage(), onTtsChange);
+  let prevTts: TtsSettings | null = null;
+
+  function onTtsChange(next: TtsSettings): void {
+    if (prevTts === null) {
+      prevTts = { ...next };
+      return;
+    }
+    const engineOrVoiceChanged =
+      next.engine !== prevTts.engine || next.voice !== prevTts.voice;
+    const rateChanged = next.rate !== prevTts.rate;
+    prevTts = { ...next };
+    if (engineOrVoiceChanged) {
+      // Restart from the spoken sentence with the new engine/voice.
+      if (playing || queuePos >= 0) {
+        const from = activeSentence >= 0 ? activeSentence : sentenceAtOrAfter(position);
+        void playFrom(from);
+      }
+      return;
+    }
+    if (rateChanged && playing) void audio?.setRate(next.rate);
+  }
 
   $: isPaged = $settings.scrollMode === "paged";
   $: contentStyle = `font-family: ${FONT_STACKS[$settings.fontFamily]}; font-size: ${$settings.fontSize}pt; font-weight: ${$settings.fontWeight}; line-height: ${$settings.lineHeight};`;
@@ -68,12 +129,21 @@
   }
 
   async function loadChapter(index: number, restorePosition: number | null = null): Promise<void> {
+    stopPlayback();
     const chapter = await api.getChapter(bookId, index);
     chapterIndex = index;
     paragraphs = chapter.text
       .split(/\n{2,}/)
       .map((p) => p.trim())
       .filter((p) => p.length > 0);
+    sentences = splitChapter(paragraphs);
+    const byPara = new Map<number, ChapterSentence[]>();
+    for (const s of sentences) {
+      const list = byPara.get(s.para) ?? [];
+      list.push(s);
+      byPara.set(s.para, list);
+    }
+    sentencesByPara = byPara;
     page = 0;
     position = restorePosition ?? 0;
     await tick();
@@ -146,12 +216,15 @@
       viewportEl.clientHeight
     );
     scheduleSave();
+    if (suppressScroll) return;
+    markVoiceDirty(); // AC-204: manual scroll repositions the voice
   }
 
-  function goToPage(target: number): void {
+  function goToPage(target: number, fromVoice = false): void {
     page = clampPage(target, pages);
     position = pageToPosition(page, pages);
     scheduleSave();
+    if (!fromVoice) markVoiceDirty();
   }
 
   function turnPage(dir: 1 | -1): void {
@@ -197,13 +270,14 @@
   }
 
   // ── Auto progression (AC-112, AC-113) ─────────────────────────────────────
+  // Suspended while the voice plays: the voice drives progression instead.
 
-  $: autoKey = `${$settings.autoEnabled}|${$settings.scrollMode}|${$settings.autoPageSeconds}|${$settings.autoScrollPxPerSec}|${chapterIndex}|${pages}`;
+  $: autoKey = `${$settings.autoEnabled}|${$settings.scrollMode}|${$settings.autoPageSeconds}|${$settings.autoScrollPxPerSec}|${chapterIndex}|${pages}|${playing}`;
   $: if (autoKey && !loading && !loadError) restartAuto();
 
   function restartAuto(): void {
     stopAuto();
-    if (!$settings.autoEnabled) return;
+    if (!$settings.autoEnabled || playing) return;
     if (isPaged) {
       autoTimer = setInterval(() => autoAdvancePage(), $settings.autoPageSeconds * 1000);
     } else {
@@ -259,13 +333,254 @@
     rafId = requestAnimationFrame(autoScrollFrame);
   }
 
+  // ── Voice-by-progression (M2: AC-201..AC-207) ─────────────────────────────
+
+  function msg(e: unknown): string {
+    return e instanceof Error ? e.message : String(e);
+  }
+
+  /** Global sentence index at or after a fractional reading position. */
+  function sentenceAtOrAfter(pos: number): number {
+    for (const s of sentences) {
+      if (sentencePosition(paragraphs, s) >= pos - 0.001) return s.index;
+    }
+    return sentences.length > 0 ? sentences[sentences.length - 1].index : 0;
+  }
+
+  /** First sentence visible in the viewport (tap-to-read anchor, AC-204). */
+  function firstVisibleSentence(): number {
+    if (!contentEl || !viewportEl || sentences.length === 0) return 0;
+    let fallback = sentences[0].index;
+    for (const s of sentences) {
+      const el = contentEl.querySelector(`[data-sid="${s.index}"]`) as HTMLElement | null;
+      if (!el) continue;
+      if (isPaged) {
+        if (pageAtOffset(el.offsetLeft - contentEl.offsetLeft, colWidth) === page) return s.index;
+      } else {
+        const elTop = el.offsetTop - contentEl.offsetTop;
+        if (elTop + el.offsetHeight >= viewportEl.scrollTop + 40) return s.index;
+      }
+      fallback = s.index;
+    }
+    return fallback;
+  }
+
+  /** Synthesize + decode the window of sentences starting at `from`. */
+  async function fetchWindow(from: number): Promise<QueueItem[]> {
+    const lengths = sentences.map((s) => s.text.length);
+    const idxs = nextWindow(from, sentences.length, WINDOW_SENTENCES, WINDOW_CHARS, lengths);
+    if (idxs.length === 0 || !audio) return [];
+    const texts = idxs.map((i) => sentences[i].text);
+    const { segments } = await api.synthesizeBatch({
+      texts,
+      engine: $tts.engine,
+      voice: $tts.voice,
+      rate: 1.0, // playback rate is applied client-side (AC-303)
+    });
+    const items: QueueItem[] = [];
+    for (let i = 0; i < segments.length; i++) {
+      const buffer = await audio.decode(segments[i].audio_b64);
+      items.push({
+        sentence: idxs[i],
+        buffer,
+        durationMs: buffer.duration * 1000,
+      });
+    }
+    return items;
+  }
+
+  /** Tap-to-read (AC-201/AC-204): play from the tapped sentence. */
+  function tapSentence(index: number): void {
+    voiceDirty = false;
+    void playFrom(index);
+  }
+
+  async function playFrom(index: number): Promise<void> {
+    if (!audio || sentences.length === 0 || !$tts.voice) return;
+    if (index < 0 || index >= sentences.length) index = 0;
+    const token = ++playToken;
+    pauseSource();
+    queue = [];
+    queuePos = -1;
+    queueStart = index;
+    prefetching = false;
+    ttsBusy = true;
+    ttsError = null;
+    try {
+      const items = await fetchWindow(index);
+      if (token !== playToken) return;
+      queue = items;
+      await playQueueItem(0, token);
+    } catch (e) {
+      if (token === playToken) {
+        ttsError = msg(e);
+        playing = false;
+      }
+    } finally {
+      if (token === playToken) ttsBusy = false;
+    }
+  }
+
+  async function playQueueItem(pos: number, token: number): Promise<void> {
+    if (token !== playToken || !audio) return;
+    const item = queue[pos];
+    if (!item) {
+      await onQueueExhausted(token);
+      return;
+    }
+    queuePos = pos;
+    setActiveSentence(item.sentence);
+    prefetchIfNeeded(token);
+    audio.onEnded = () => void playQueueItem(pos + 1, token);
+    try {
+      await audio.play(item.buffer, 0, $tts.rate);
+    } catch (e) {
+      if (token === playToken) {
+        ttsError = msg(e);
+        stopPlayback();
+      }
+    }
+  }
+
+  async function onQueueExhausted(token: number): Promise<void> {
+    const nextStart = queueStart + queue.length;
+    if (nextStart < sentences.length) {
+      ttsBusy = true;
+      try {
+        const items = await fetchWindow(nextStart);
+        if (token !== playToken) return;
+        queue.push(...items);
+        await playQueueItem(queue.length - items.length, token);
+      } catch (e) {
+        if (token === playToken) {
+          ttsError = msg(e);
+          playing = false;
+        }
+      } finally {
+        if (token === playToken) ttsBusy = false;
+      }
+      return;
+    }
+    // Chapter finished: voice-driven auto-advance (AC-205).
+    playing = false;
+    activeSentence = -1;
+    if ($tts.autoAdvance && chapterIndex < chapters.length - 1) {
+      await loadChapter(chapterIndex + 1, 0);
+      void playFrom(0);
+    }
+  }
+
+  /** Keep a window of audio ahead of the voice so playback stays gapless. */
+  function prefetchIfNeeded(token: number): void {
+    if (prefetching || token !== playToken) return;
+    const nextStart = queueStart + queue.length;
+    if (queuePos < queue.length - 3 || nextStart >= sentences.length) return;
+    prefetching = true;
+    void fetchWindow(nextStart)
+      .then((items) => {
+        if (token === playToken) queue.push(...items);
+      })
+      .catch(() => {
+        /* prefetch failure is non-fatal; retried at queue exhaustion */
+      })
+      .finally(() => {
+        prefetching = false;
+      });
+  }
+
+  function setActiveSentence(index: number): void {
+    activeSentence = index;
+    playing = true;
+    // The reading position follows the voice (progress + AC-207).
+    position = sentencePosition(paragraphs, sentences[index]);
+    scheduleSave();
+    followVoice(index);
+  }
+
+  /** View follows the voice (AC-203): scroll to / turn to the spoken sentence. */
+  function followVoice(index: number): void {
+    const el = contentEl?.querySelector(`[data-sid="${index}"]`) as HTMLElement | null;
+    if (!el || !viewportEl || !contentEl) return;
+    if (isPaged) {
+      const target = pageAtOffset(el.offsetLeft - contentEl.offsetLeft, colWidth);
+      if (target !== page) goToPage(target, true);
+    } else {
+      suppressScroll = true;
+      const elTop = el.offsetTop - contentEl.offsetTop;
+      viewportEl.scrollTop = Math.max(0, elTop - viewportEl.clientHeight / 2);
+      setTimeout(() => {
+        suppressScroll = false;
+      }, 200);
+    }
+  }
+
+  /** User navigated manually: the voice must reposition (AC-204). */
+  function markVoiceDirty(): void {
+    voiceDirty = true;
+    if (repositionTimer) clearTimeout(repositionTimer);
+    if (!playing) return;
+    repositionTimer = setTimeout(() => {
+      const idx = firstVisibleSentence();
+      if (idx >= 0 && idx !== activeSentence) void playFrom(idx);
+    }, 500);
+  }
+
+  function togglePlay(): void {
+    if (!audio || sentences.length === 0) return;
+    if (playing) {
+      pauseSource();
+      return;
+    }
+    if (queuePos >= 0 && queue[queuePos] && !voiceDirty) {
+      playing = true;
+      const token = playToken;
+      const resumePos = queuePos;
+      // Restore the segment chain that pauseSource() detached.
+      audio.onEnded = () => void playQueueItem(resumePos + 1, token);
+      void audio.resume().catch((e) => {
+        ttsError = msg(e);
+        playing = false;
+      });
+      return;
+    }
+    const from =
+      voiceDirty || activeSentence < 0 ? firstVisibleSentence() : activeSentence;
+    voiceDirty = false;
+    void playFrom(from);
+  }
+
+  function pauseSource(): void {
+    if (!audio) return;
+    audio.onEnded = null;
+    audio.pause();
+    playing = false;
+  }
+
+  function stopPlayback(): void {
+    playToken++;
+    pauseSource();
+    queue = [];
+    queuePos = -1;
+    queueStart = 0;
+    prefetching = false;
+    voiceDirty = false;
+    activeSentence = -1;
+    ttsBusy = false;
+    if (repositionTimer) {
+      clearTimeout(repositionTimer);
+      repositionTimer = null;
+    }
+  }
+
   onMount(() => {
+    audio = new AudioEngine();
     void open();
     window.addEventListener("resize", onResize);
     window.addEventListener("keydown", onKeydown);
   });
 
   onDestroy(() => {
+    stopPlayback();
     stopAuto();
     window.removeEventListener("resize", onResize);
     window.removeEventListener("keydown", onKeydown);
@@ -294,6 +609,15 @@
     />
     <div class="header-actions">
       <button
+        class="listen-toggle"
+        class:active={playing}
+        on:click={togglePlay}
+        disabled={loading || paragraphs.length === 0}
+        title="Read aloud from the current position"
+      >
+        {ttsBusy ? "Loading…" : playing ? "Pause" : "Listen"}
+      </button>
+      <button
         class="auto-toggle"
         class:active={$settings.autoEnabled}
         on:click={() => settings.update((s) => ({ ...s, autoEnabled: !s.autoEnabled }))}
@@ -307,6 +631,18 @@
         </button>
         {#if showSettings}
           <SettingsPanel />
+        {/if}
+      </div>
+      <div class="settings-wrap">
+        <button
+          on:click={() => (showVoice = !showVoice)}
+          title="Voice settings"
+          class:active={showVoice}
+        >
+          Voice
+        </button>
+        {#if showVoice}
+          <VoicePanel store={tts} language={book?.language || ""} />
         {/if}
       </div>
     </div>
@@ -348,9 +684,12 @@
                 : "")}
           >
             <h2 class="chapter-title">{chapters[chapterIndex]?.title}</h2>
-            {#each paragraphs as para, i (i)}
-              <p>{para}</p>
-            {/each}
+            <SentenceContent
+              {paragraphs}
+              {sentencesByPara}
+              activeSentence={activeSentence}
+              on:tap={(e) => tapSentence(e.detail)}
+            />
           </div>
         </div>
         <div class="page-indicator muted">Page {page + 1}/{pages}</div>
@@ -363,9 +702,12 @@
             style={contentStyle}
           >
             <h2 class="chapter-title">{chapters[chapterIndex]?.title}</h2>
-            {#each paragraphs as para, i (i)}
-              <p>{para}</p>
-            {/each}
+            <SentenceContent
+              {paragraphs}
+              {sentencesByPara}
+              activeSentence={activeSentence}
+              on:tap={(e) => tapSentence(e.detail)}
+            />
           </div>
         </div>
       {/if}
@@ -376,7 +718,11 @@
     <div class="progress-track">
       <div class="progress-fill" style="width: {bookPct}%"></div>
     </div>
-    <span class="muted">{bookPct}% of book</span>
+    {#if ttsError}
+      <span class="error" title={ttsError}>{ttsError}</span>
+    {:else}
+      <span class="muted">{bookPct}% of book</span>
+    {/if}
   </footer>
 </div>
 
@@ -428,6 +774,7 @@
     position: relative;
   }
 
+  .listen-toggle.active,
   .auto-toggle.active {
     background: var(--accent);
     color: var(--bg);
@@ -506,7 +853,7 @@
     text-align: left;
   }
 
-  .reader-content p {
+  .reader-content :global(p) {
     margin: 0 0 0.9em;
     text-indent: 1.2em;
   }

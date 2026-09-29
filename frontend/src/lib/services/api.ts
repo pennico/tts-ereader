@@ -1,5 +1,13 @@
 /** Thin fetch wrapper for the backend API (ARCHITECTURE_v1 §2.2 services/api.ts). */
-import type { Book, ChapterMeta, ChapterText, Progress } from "../types";
+import type {
+  Book,
+  ChapterMeta,
+  ChapterText,
+  Progress,
+  SynthesisSegment,
+  TtsEngineInfo,
+  TtsVoiceInfo,
+} from "../types";
 
 const BASE = "/api";
 
@@ -45,5 +53,34 @@ export const api = {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(progress),
+    }),
+
+  // ── TTS (M2) ────────────────────────────────────────────────────────────
+
+  listEngines: () => request<TtsEngineInfo[]>("/tts/engines"),
+
+  listVoices: (engine: string, language?: string) =>
+    request<TtsVoiceInfo[]>(
+      `/tts/engines/${engine}/voices` +
+        (language ? `?language=${encodeURIComponent(language)}` : "")
+    ),
+
+  synthesize: (body: { text: string; engine: string; voice: string; rate: number }) =>
+    request<SynthesisSegment>("/tts/synthesize", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+
+  synthesizeBatch: (body: {
+    texts: string[];
+    engine: string;
+    voice: string;
+    rate: number;
+  }) =>
+    request<{ segments: SynthesisSegment[] }>("/tts/synthesize-batch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
     }),
 };
