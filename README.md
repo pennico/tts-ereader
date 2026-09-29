@@ -9,7 +9,7 @@ An AI-powered text-to-speech system that analyzes text for characters, emotion, 
 - **Italian (edge-tts hybrid)**: Good quality. `edge_reader.py` pairs Mistral LLM text preparation (cleaning, re-punctuation for speech, speaker tagging) with free Microsoft edge-tts neural voices. See "edge_reader" below.
 - **Danish**: Not supported by Voxtral. Included as a test case only.
 - **EPUB support**: Working. Text is extracted, chunked, analyzed, and synthesized per chapter.
-- **v1 (in progress)**: the reader app is specified and architected — see `PLAN_v1_reader.md`, `docs/SPEC_v1.md`, and `docs/ARCHITECTURE_v1.md`. M1 (library + reader view) and M2 (TTS engines + voice-by-progression) are implemented; milestones M1–M4 are tracked in `ROADMAP.md`.
+- **v1 (in progress)**: the reader app is specified and architected — see `PLAN_v1_reader.md`, `docs/SPEC_v1.md`, and `docs/ARCHITECTURE_v1.md`. M1 (library + reader view), M2 (TTS engines + voice-by-progression), and M3 (voice tuning + LLM preparation with per-book voice casts) are implemented; milestones M1–M4 are tracked in `ROADMAP.md`.
 
 ## Architecture
 
@@ -384,9 +384,10 @@ tts-ereader/
 ├── poc_player.html        # Web player with synced highlighting + style toggle
 ├── tests/                 # v0 unit tests (python3 -m unittest discover tests)
 │   └── fixtures/make_fixture_epub.py  # Synthetic EPUB generator (no copyrighted books)
-├── backend/               # v1 reader app (M1+M2 — see docs/ARCHITECTURE_v1.md)
+├── shared/                # text preparation + voice cast shared by v0 CLIs and the v1 app (M3)
+├── backend/               # v1 reader app (M1–M3 — see docs/ARCHITECTURE_v1.md)
 │   ├── app/               # FastAPI: library/reader/TTS API, EPUB parser, TTS engines
-│   └── tests/             # pytest unit + integration tests (49 passing)
+│   └── tests/             # pytest unit + integration tests
 ├── frontend/              # v1 reader UI (Svelte 4 + Vite + TypeScript)
 │   ├── src/lib/pages/     # Library and Reader pages
 │   ├── src/lib/components/# BookCard, ChapterNav, SettingsPanel, VoicePanel, SentenceContent
@@ -409,7 +410,7 @@ tts-ereader/
     └── ggs_ch3/           # Guns, Germs, and Steel preface
 ```
 
-## v1 reader app (M1: library + reader view; M2: TTS + voice-by-progression)
+## v1 reader app (M1: library + reader; M2: TTS + read-along; M3: voice tuning + LLM preparation)
 
 The v1 app is in `backend/` (FastAPI + SQLite via SQLModel) and `frontend/`
 (Svelte 4 + Vite + TypeScript), per `docs/ARCHITECTURE_v1.md`. M1 delivers:
@@ -445,8 +446,32 @@ M2 adds TTS and the voice-by-progression read-along:
 - Per-book voice settings (engine, voice, rate, auto-advance) in the reader's
   Voice panel, persisted to localStorage per book.
 
+M3 adds voice tuning and the LLM preparation pipeline:
+
+- Voice panel: engine + voice selection, rate 0.5x–2x (client-side), pitch
+  -20..+20 (baked into synthesis), a "Test this voice" button, and a per-book
+  voice cast. The cast is seeded from engine+language defaults (Italian
+  edge-tts: Giuseppe/Vivienne/Emma/Andrew; Danish edge-tts: Jeppe/Christel;
+  Gemini: Charon/Kore/Leda/Puck) and every role can be overridden per book;
+  settings persist per book in localStorage.
+- With the cast enabled, the chapter is prepared through the same Mistral
+  pipeline as the v0 CLIs (`shared/text_preparation.py`: clean +
+  repunctuate + speaker tagging, with Italian (Saramago), Danish
+  (Adler-Olsen), and generic prompts), cached on disk per book+chapter so
+  it is never re-billed, and the prepared lines become the display and
+  playback unit: each character reads with their own voice, speaker labels
+  are shown inline, and tap-to-read/highlight/follow-voice work per line.
+- Preparation API: `POST /api/books/{id}/chapters/{n}/prepare` (LLM + cast
+  resolution; 503 without `MISTRAL_API_KEY`), `GET .../prepared` (cache
+  only), `GET /api/tts/cast-defaults`; `synthesize-batch` accepts per-text
+  voices.
+- The v0 CLIs now import preparation + cast logic from `shared/`; their
+  surface and Italian cast output are pinned by `tests/test_v0_compat.py`.
+
 Gemini TTS needs `GEMINI_API_KEY` in `.env`; without it the engine shows as
-unavailable and synthesis falls back to edge-tts automatically. Live Gemini
+unavailable and synthesis falls back to edge-tts automatically. LLM
+preparation needs `MISTRAL_API_KEY`; without it the cast toggle reports the
+error and the reader falls back to plain single-voice narration. Live Gemini
 synthesis was verified by the owner on 2026-09-19 for Italian and Danish; the
 sandbox only exercises engines through mocks plus free edge-tts smoke tests.
 
@@ -473,8 +498,7 @@ cd frontend && npm run build
 cd .. && python3 -m uvicorn app.main:app --app-dir backend
 ```
 
-Not yet implemented: voice tuning UI + LLM preparation integration with
-per-book voice casts (M3), Docker deployment + benchmark (M4) — see
+Not yet implemented: Docker deployment + benchmark harness (M4) — see
 `ROADMAP.md`.
 
 ## Technical notes
