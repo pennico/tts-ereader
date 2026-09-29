@@ -1,10 +1,11 @@
 """TTS endpoints: engines, voices, synthesize, batch (AC-501..AC-508)."""
 from __future__ import annotations
 
+from pathlib import Path
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.core.config import Settings, get_settings
 from app.engines import base as engine_base
@@ -59,6 +60,28 @@ class BatchIn(BaseModel):
     voice: str
     rate: float = Field(default=1.0, ge=0.5, le=2.0)
     pitch: float = Field(default=0.0, ge=-20.0, le=20.0)
+    # Per-text voice overrides for voice-cast playback (AC-305); parallel to
+    # texts, empty entries fall back to `voice`.
+    voices: Optional[List[str]] = None
+
+    @model_validator(mode="after")
+    def _voices_match_texts(self):
+        if self.voices is not None and len(self.voices) != len(self.texts):
+            raise ValueError("voices must be parallel to texts (same length)")
+        return self
+
+
+class CastRoleOut(BaseModel):
+    role: str
+    display_name: str
+    voice: str
+    voice_display_name: str
+
+
+class CastDefaultsOut(BaseModel):
+    engine: str
+    language: str
+    roles: List[CastRoleOut]
 
 
 class BatchOut(BaseModel):
@@ -110,6 +133,38 @@ async def list_voices(
     return [VoiceOut(**v) for v in voices]
 
 
+@router.get("/cast-defaults", response_model=CastDefaultsOut)
+def cast_defaults(
+    engine: Optional[str] = None,
+    language: Optional[str] = Query(default=None),
+    settings: Settings = Depends(get_settings),
+):
+    """Default voice cast for an engine + language (drives the cast UI, AC-305)."""
+    try:
+        from shared import voice_cast
+    except ImportError:  # pragma: no cover - repo-root import bootstrap
+        import sys
+
+        sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+        from shared import voice_cast
+
+    engine_name = engine or settings.default_engine
+    cast = voice_cast.default_cast(engine_name, language)
+    return CastDefaultsOut(
+        engine=engine_name,
+        language=language or "",
+        roles=[
+            CastRoleOut(
+                role=role,
+                display_name=voice_cast.ROLE_DISPLAY[role],
+                voice=voice,
+                voice_display_name=name,
+            )
+            for role, (voice, name) in cast.items()
+        ],
+    )
+
+
 @router.post("/synthesize", response_model=SynthesisOut)
 async def synthesize(body: SynthesizeIn, settings: Settings = Depends(get_settings)):
     try:
@@ -137,6 +192,7 @@ async def synthesize_batch(body: BatchIn, settings: Settings = Depends(get_setti
             engine_name=body.engine,
             rate=body.rate,
             pitch=body.pitch,
+            voices=body.voices,
         )
     except engine_base.EngineError as e:
         raise HTTPException(status_code=502, detail=str(e))

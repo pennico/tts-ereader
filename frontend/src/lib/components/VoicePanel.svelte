@@ -1,13 +1,22 @@
 <script lang="ts">
   /**
-   * Voice panel: engine + voice selection and rate (AC-301..AC-303), plus the
-   * voice-driven auto-advance toggle (AC-205). Per-book settings via the tts
-   * store passed in from the reader.
+   * Voice panel: engine + voice selection, rate and pitch (AC-301..AC-304),
+   * "Test this voice" (AC-306), and the per-book voice cast (AC-305, AC-307).
+   * Cast preparation itself is driven by the reader when castEnabled turns
+   * on; this panel only edits and persists the settings.
    */
-  import { onMount } from "svelte";
+  import { onDestroy, onMount } from "svelte";
   import type { Writable } from "svelte/store";
   import { api } from "../services/api";
-  import type { TtsEngineInfo, TtsSettings, TtsVoiceInfo } from "../types";
+  import { AudioEngine } from "../services/audioEngine";
+  import {
+    CAST_ROLES,
+    CAST_ROLE_LABELS,
+    type CastRole,
+    type TtsEngineInfo,
+    type TtsSettings,
+    type TtsVoiceInfo,
+  } from "../types";
 
   export let store: Writable<TtsSettings>;
   export let language = "";
@@ -16,6 +25,21 @@
   let voices: TtsVoiceInfo[] = [];
   let loading = true;
   let error: string | null = null;
+
+  // "Test this voice" (AC-306)
+  let testing = false;
+  let testEngine: AudioEngine | null = null;
+
+  const SAMPLE_TEXTS: Record<string, string> = {
+    it: "Così va il mondo: una voce legge, e il resto ascolta.",
+    da: "Sådan går verden: en stemme læser, og resten lytter.",
+    en: "So goes the world: one voice reads, and the rest listens.",
+  };
+
+  function sampleText(): string {
+    const lang = (language || "en").split("-")[0].toLowerCase();
+    return SAMPLE_TEXTS[lang] ?? SAMPLE_TEXTS.en;
+  }
 
   $: selectedEngine = $store.engine;
   $: selectedVoice = $store.voice;
@@ -27,11 +51,16 @@
     try {
       engines = await api.listEngines();
       await refreshVoices();
+      await refreshCastDefaults();
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {
       loading = false;
     }
+  });
+
+  onDestroy(() => {
+    testEngine?.pause();
   });
 
   async function refreshVoices(): Promise<void> {
@@ -49,15 +78,37 @@
     }
   }
 
+  /** Default cast voices for the engine + language (AC-305). */
+  async function refreshCastDefaults(): Promise<void> {
+    try {
+      const defaults = await api.castDefaults(selectedEngine, language || undefined);
+      const byRole = new Map(defaults.roles.map((r) => [r.role, r.voice]));
+      store.update((s) => {
+        const cast: Record<string, string> = {};
+        for (const role of CAST_ROLES) {
+          cast[role] = s.cast[role] || byRole.get(role) || "";
+        }
+        return { ...s, cast };
+      });
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    }
+  }
+
   function setVoice(name: string): void {
     store.update((s) => ({ ...s, voice: name }));
   }
 
   function onEngine(event: Event & { currentTarget: HTMLSelectElement }): void {
     const name = event.currentTarget.value;
-    store.update((s) => ({ ...s, voice: "" })); // force re-pick for the engine
-    store.update((s) => ({ ...s, engine: name }));
+    store.update((s) => ({
+      ...s,
+      voice: "", // force re-pick for the engine
+      cast: {}, // cast voices are engine-specific; refill from defaults
+      engine: name,
+    }));
     void refreshVoices();
+    void refreshCastDefaults();
   }
 
   function onVoice(event: Event & { currentTarget: HTMLSelectElement }): void {
@@ -68,8 +119,51 @@
     store.update((s) => ({ ...s, rate: Number(event.currentTarget.value) }));
   }
 
+  function onPitch(event: Event & { currentTarget: HTMLInputElement }): void {
+    store.update((s) => ({ ...s, pitch: Number(event.currentTarget.value) }));
+  }
+
   function onAutoAdvance(event: Event & { currentTarget: HTMLInputElement }): void {
     store.update((s) => ({ ...s, autoAdvance: event.currentTarget.checked }));
+  }
+
+  function onCastToggle(event: Event & { currentTarget: HTMLInputElement }): void {
+    store.update((s) => ({ ...s, castEnabled: event.currentTarget.checked }));
+  }
+
+  function onCastRoleSelect(
+    role: CastRole
+  ): (event: Event & { currentTarget: HTMLSelectElement }) => void {
+    return (event) => {
+      store.update((s) => ({
+        ...s,
+        cast: { ...s.cast, [role]: event.currentTarget.value },
+      }));
+    };
+  }
+
+  /** AC-306: synthesize a short sample with the current settings and play it. */
+  async function testVoice(): Promise<void> {
+    if (testing || !$store.voice) return;
+    testing = true;
+    error = null;
+    try {
+      if (!testEngine) testEngine = new AudioEngine();
+      testEngine.pause();
+      const segment = await api.synthesize({
+        text: sampleText(),
+        engine: $store.engine,
+        voice: $store.voice,
+        rate: 1.0, // playback rate is applied client-side (AC-303)
+        pitch: $store.pitch,
+      });
+      const buffer = await testEngine.decode(segment.audio_b64);
+      await testEngine.play(buffer, 0, $store.rate);
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    } finally {
+      testing = false;
+    }
   }
 </script>
 
@@ -106,6 +200,9 @@
           </option>
         {/each}
       </select>
+      <button class="test" on:click={testVoice} disabled={testing || !$store.voice}>
+        {testing ? "Synthesizing…" : "Test this voice"}
+      </button>
     </section>
 
     <section>
@@ -124,6 +221,23 @@
     </section>
 
     <section>
+      <h4>Pitch</h4>
+      <label class="inline">
+        <input
+          type="range"
+          min="-20"
+          max="20"
+          step="1"
+          value={$store.pitch}
+          on:input={onPitch}
+        />
+        <span class="muted">
+          {$store.pitch > 0 ? "+" : ""}{$store.pitch}
+        </span>
+      </label>
+    </section>
+
+    <section>
       <label class="inline">
         <input
           type="checkbox"
@@ -132,6 +246,38 @@
         />
         Auto-advance chapters when the voice finishes
       </label>
+    </section>
+
+    <section>
+      <label class="inline">
+        <input
+          type="checkbox"
+          checked={$store.castEnabled}
+          on:change={onCastToggle}
+        />
+        Voice cast (LLM speaker tagging)
+      </label>
+      {#if $store.castEnabled}
+        <div class="cast">
+          {#each CAST_ROLES as role (role)}
+            <label class="cast-role">
+              <span>{CAST_ROLE_LABELS[role]}</span>
+              <select value={$store.cast[role] ?? ""} on:change={onCastRoleSelect(role)}>
+                {#each voices as voice (voice.name)}
+                  <option value={voice.name}>
+                    {voice.display_name}{voice.locale ? ` (${voice.locale})` : ""}
+                  </option>
+                {/each}
+              </select>
+            </label>
+          {/each}
+          <p class="hint">
+            The chapter is prepared with the LLM (needs MISTRAL_API_KEY) and each
+            character reads with their own voice. The prepared text replaces the
+            chapter view while the cast is on.
+          </p>
+        </div>
+      {/if}
     </section>
   {/if}
 </div>
@@ -147,6 +293,8 @@
     border-radius: 8px;
     padding: 12px 14px;
     width: 280px;
+    max-height: 70vh;
+    overflow-y: auto;
     display: flex;
     flex-direction: column;
     gap: 12px;
@@ -182,5 +330,25 @@
     color: #b33;
     font-size: 13px;
     margin: 0;
+  }
+
+  .test {
+    margin-top: 6px;
+    width: 100%;
+  }
+
+  .cast {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 8px;
+  }
+
+  .cast-role {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-size: 12px;
+    color: var(--muted, inherit);
   }
 </style>

@@ -64,20 +64,73 @@ export interface SynthesisSegment {
   word_boundaries: WordBoundary[] | null;
 }
 
-/** Per-book voice settings (AC-301..AC-303), persisted locally per book. */
+/** Per-book voice settings (AC-301..AC-304, AC-305, AC-307), persisted locally per book. */
 export interface TtsSettings {
   engine: string;
   voice: string;
   rate: number; // 0.5..2.0 (AC-303)
+  pitch: number; // -20..20 (AC-304)
   autoAdvance: boolean; // voice-driven auto progression (AC-205)
+  castEnabled: boolean; // per-book voice cast via LLM speaker tagging (AC-305)
+  cast: Record<string, string>; // role -> voice id overrides (AC-305)
 }
 
 export const DEFAULT_TTS_SETTINGS: TtsSettings = {
   engine: "gemini",
   voice: "Kore",
   rate: 1.0,
+  pitch: 0,
   autoAdvance: true,
+  castEnabled: false,
+  cast: {},
 };
+
+/** Cast roles (mirrors shared/voice_cast.py). */
+export const CAST_ROLES = [
+  "narrator",
+  "female_1",
+  "female_other",
+  "male_short",
+] as const;
+
+export type CastRole = (typeof CAST_ROLES)[number];
+
+export const CAST_ROLE_LABELS: Record<CastRole, string> = {
+  narrator: "Narrator / male characters",
+  female_1: "First female character",
+  female_other: "Other female characters",
+  male_short: "Short male side roles",
+};
+
+/** Prepared chapter segments (backend/app/api/prepare.py, M3). */
+export interface PreparedSegment {
+  index: number;
+  text: string;
+  speaker: string | null;
+  gender: string | null;
+  role: string;
+  voice: string;
+}
+
+export interface PreparedChapter {
+  chapter_index: number;
+  language: string;
+  cached: boolean;
+  segments: PreparedSegment[];
+}
+
+export interface CastRoleInfo {
+  role: string;
+  display_name: string;
+  voice: string;
+  voice_display_name: string;
+}
+
+export interface CastDefaults {
+  engine: string;
+  language: string;
+  roles: CastRoleInfo[];
+}
 
 /** Reader display + behavior preferences (AC-101..AC-113), persisted locally. */
 export interface ReaderSettings {
