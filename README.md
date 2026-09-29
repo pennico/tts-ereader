@@ -9,7 +9,7 @@ An AI-powered text-to-speech system that analyzes text for characters, emotion, 
 - **Italian (edge-tts hybrid)**: Good quality. `edge_reader.py` pairs Mistral LLM text preparation (cleaning, re-punctuation for speech, speaker tagging) with free Microsoft edge-tts neural voices. See "edge_reader" below.
 - **Danish**: Not supported by Voxtral. Included as a test case only.
 - **EPUB support**: Working. Text is extracted, chunked, analyzed, and synthesized per chapter.
-- **v1 (in progress)**: the reader app is specified and architected — see `PLAN_v1_reader.md`, `docs/SPEC_v1.md`, and `docs/ARCHITECTURE_v1.md`. Implementation milestones M1–M4 are tracked in `ROADMAP.md`.
+- **v1 (in progress)**: the reader app is specified and architected — see `PLAN_v1_reader.md`, `docs/SPEC_v1.md`, and `docs/ARCHITECTURE_v1.md`. M1 (library + reader view) is implemented; milestones M1–M4 are tracked in `ROADMAP.md`.
 
 ## Architecture
 
@@ -384,9 +384,13 @@ tts-ereader/
 ├── poc_player.html        # Web player with synced highlighting + style toggle
 ├── tests/                 # v0 unit tests (python3 -m unittest discover tests)
 │   └── fixtures/make_fixture_epub.py  # Synthetic EPUB generator (no copyrighted books)
-├── backend/               # v1 reader app (M1 in progress — see docs/ARCHITECTURE_v1.md)
+├── backend/               # v1 reader app (M1 — see docs/ARCHITECTURE_v1.md)
 │   ├── app/               # FastAPI: library/reader API, EPUB parser, SQLite models
-│   └── tests/             # pytest unit + integration tests (21 passing)
+│   └── tests/             # pytest unit + integration tests (22 passing)
+├── frontend/              # v1 reader UI (Svelte 4 + Vite + TypeScript)
+│   ├── src/lib/pages/     # Library and Reader pages
+│   ├── src/lib/components/# BookCard, ChapterNav, SettingsPanel
+│   └── src/lib/           # api client, settings store, pagination/theme utils
 ├── voices.json            # Voice profile → voice_id mapping (basic + enhanced)
 ├── requirements.txt       # Python dependencies (mistralai, pydub, mutagen)
 ├── .env                   # API key (gitignored, you create this)
@@ -405,28 +409,47 @@ tts-ereader/
     └── ggs_ch3/           # Guns, Germs, and Steel preface
 ```
 
-## v1 reader app (M1 in progress)
+## v1 reader app (M1: library + reader view)
 
-The v1 backend skeleton is in `backend/` (FastAPI + SQLite via SQLModel, per
-`docs/ARCHITECTURE_v1.md`). Implemented so far: EPUB import with metadata and
-spine-ordered chapter indexing, library list/get/delete, per-book progress
-persistence, chapter text endpoints, and synthetic EPUB fixtures.
+The v1 app is in `backend/` (FastAPI + SQLite via SQLModel) and `frontend/`
+(Svelte 4 + Vite + TypeScript), per `docs/ARCHITECTURE_v1.md`. M1 delivers:
+
+- EPUB import with metadata, cover extraction, and spine-ordered chapter
+  indexing; library list/get/delete; per-book progress persistence.
+- Library UI: import via file picker or drag & drop, cover cards with
+  progress bars, remove.
+- Reader UI: chapter navigation, fonts (family, size 8–32pt, weight,
+  line-height 1.0–2.5), themes (light/dark/sepia/custom colors), continuous
+  scroll and paginated modes with toggle, auto-advance/auto-scroll with
+  configurable speed, progress saved per book and restored on open,
+  lang-aware hyphenation for European typography.
 
 ```bash
 pip3 install -r requirements.txt -r requirements-dev.txt
 
-# Run the test suite (unit + integration, <1s)
+# Run the backend test suite (unit + integration, <1s)
 python3 -m pytest backend/tests -q
 
 # Generate synthetic test EPUBs (never commit real books)
 python3 tests/fixtures/make_fixture_epub.py --out-dir /tmp/epubs
 
-# Run the API server (data lives in ./data or $TTSEREADER_DATA_DIR)
+# Development: backend on :8000, frontend dev server on :5173 (proxies /api)
 cd backend && python3 -m uvicorn app.main:app --reload
+cd frontend && npm install && npm run dev
+
+# Frontend unit tests (Vitest) and type check
+cd frontend && npm test && npm run check
+
+# Production-style single server: build the frontend, then run the backend;
+# it serves frontend/dist at http://localhost:8000 (data lives in ./data
+# or $TTSEREADER_DATA_DIR)
+cd frontend && npm run build
+cd .. && python3 -m uvicorn app.main:app --app-dir backend
 ```
 
-Not yet implemented: the Svelte frontend (library/reader UI, themes, fonts,
-scroll modes) and Docker deployment — see `ROADMAP.md`.
+Not yet implemented: TTS and voice-by-progression (M2), voice tuning +
+LLM preparation integration (M3), Docker deployment + benchmark (M4) —
+see `ROADMAP.md`.
 
 ## Technical notes
 
