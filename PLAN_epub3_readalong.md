@@ -14,7 +14,7 @@ playback with the phone locked during commutes.
 
 | Reader | EPUB3 Media Overlays |
 |---|---|
-| Apple Books (iOS/macOS) | Yes — primary target |
+| Apple Books (iOS/macOS) | Fixed-layout only — primary target (`epub_fixedlayout.py`); ignores overlays in reflowable EPUBs |
 | Thorium Reader (desktop) | Yes — use as validation cross-check |
 | Google Play Books | Yes |
 | Readest | No (feature-request level; standard file will work if added later) |
@@ -81,7 +81,7 @@ real-device QA.
 |---|---|
 | LLM preparation (mistral-large-latest) | ~$1.50 (under $0.50 with mistral-small-latest) |
 | edge-tts synthesis | free |
-| Generation time | ~1.5–2h sequential; 30–40 min with parallel synthesis workers (not yet implemented) |
+| Generation time | ~30-40 min with parallel synthesis workers (`--workers`, default 4; implemented 2026-09-19) |
 
 ## Delivery architecture (decided)
 
@@ -110,12 +110,28 @@ Therefore "at need" applies at the **book level**, not chapter level:
 - Approved sample: `out/saramago_edge/` (Giuseppe + Vivienne, 10 segments).
 - Book: "Storia dell'assedio di Lisbona" EPUB, 21 chapters, 259K chars,
   source text verified clean (no OCR errors found).
+- `epub_mo.py` — Media Overlays injected into the original XHTML; works,
+  94% word match on the test slice, self-validates output.
+- `epub_readaloud.py` — simpler variant (fresh EPUB from prepared text);
+  recommended reflowable output path.
+- **Apple Books blocker addressed (2026-09-19)**: `epub_fixedlayout.py`
+  builds a fixed-layout (pre-paginated) read-along EPUB — the variant Apple
+  Books will play. Paginates prepared text into fixed-size pages
+  (`--chars-per-page`, `--viewport`), one SMIL per page clipping into the
+  chapter audio, `rendition:layout`/`rendition:viewport` metadata, and a
+  `--demo` mode that builds a tiny test book with no API key for device QA.
+  Structure validated programmatically (tests + self-validation); real-device
+  QA in Apple Books is pending.
 
 ## Next steps (when resuming)
 
-1. Implement phases 1–2 as `epub_mo.py` (or a `--epub3` mode of
-   `edge_reader.py`), reusing chunking, preparation, and voice cast as-is.
-2. Validate on a short chapter slice; cross-check structure in Thorium Reader.
-3. User QA in Apple Books on iPhone; fix round.
-4. Add parallel synthesis workers (30–40 min per book).
+1. ~~Implement phases 1–2~~ done (`epub_mo.py`, `epub_readaloud.py`).
+2. ~~Validate on a short chapter slice~~ done (Thorium cross-check passed).
+3. User QA of `epub_fixedlayout.py` output in Apple Books on iPhone:
+   run `--demo`, then a `--slice 4000` chapter, then `--all`; tune
+   `--chars-per-page`/`--viewport` if text overflows or underfills pages.
+4. ~~Add parallel synthesis workers~~ done (2026-09-19): `--workers`
+   (default 4) on edge_reader, epub_mo, epub_readaloud, epub_fixedlayout;
+   asyncio semaphore + gather, segment order preserved; mocked-synthesizer
+   tests in `tests/test_parallel_synth.py`.
 5. Dockerize as the book-level on-demand service for the homelab.

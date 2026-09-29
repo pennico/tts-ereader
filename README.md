@@ -65,7 +65,8 @@ python3 edge_reader.py --epub "book.epub" --chapter 4 --output-dir out/ch4
 
 Options: `--rate` (default `-8%`, softens delivery), `--model` (LLM for
 preparation, default `mistral-large-latest`), `--max-chars` (chunk size),
-`--andrew-short`. The prepared text is saved as `prepared_text.txt` so the
+`--andrew-short`, `--workers` (concurrent edge-tts requests, default 4).
+The prepared text is saved as `prepared_text.txt` so the
 cleaning/re-punctuation can be inspected before listening.
 
 ### Cost
@@ -105,7 +106,8 @@ python3 epub_mo.py --epub "book.epub" --all --output out/book_readalong.epub
 
 Options: `--rate`, `--model`, `--max-chars`, `--andrew-short` (same as
 edge_reader), plus `--slice` (chars per chapter, for testing) and `--work-dir`
-(intermediate segment files, default `out/mo_work`). The script validates its
+(intermediate segment files, default `out/mo_work`). Synthesis runs with
+`--workers` concurrent edge-tts requests (default 4). The script validates its
 own output (OPF/SMIL parse, anchors exist, clips monotonic) and reports the
 word match rate; a test slice of chapter 4 matched 94% of source words and
 clipped 50/52 fragments (the misses were the chapter number and one clause
@@ -117,9 +119,9 @@ foreign words are possible.
 
 **Important — Apple Books does not play these files.** Apple Books (iPhone
 and Mac) ignores Media Overlays in reflowable EPUBs; it only plays them in
-fixed-layout books. A valid overlay EPUB opens fine but shows no read-aloud
-controls. Use `epub_readaloud.py` output with Thorium Reader (Mac) or another
-Media Overlays capable reader (see below).
+fixed-layout books. Use `epub_fixedlayout.py` (below) for the Apple Books
+route, or `epub_readaloud.py` output with Thorium Reader (Mac) or another
+Media Overlays capable reader.
 
 ## epub_readaloud: simple read-along EPUB (recommended)
 
@@ -139,21 +141,75 @@ python3 epub_readaloud.py --epub "book.epub" --all --output out/readalong.epub
 ```
 
 Same options as edge_reader (`--rate`, `--model`, `--max-chars`,
-`--andrew-short`), plus `--slice` and `--work-dir`. It also strips the book
+`--andrew-short`, `--workers`), plus `--slice` and `--work-dir`. It also strips the book
 title that leaks from the source `<title>` tag so chapters don't start with
 the title being read aloud.
 
 ### Where read-along actually works
 
-| Reader | Media Overlays (reflowable) |
-|---|---|
-| Apple Books (iPhone + Mac) | No — opens the book, ignores the overlay |
-| Thorium Reader (Mac/Win/Linux, free) | Yes — the reference test player |
-| Kobo Books / Adobe Digital Editions (iOS) | Yes (per current reports) |
-| Readest | No |
+| Reader | Media Overlays (reflowable) | Media Overlays (fixed layout) |
+|---|---|---|
+| Apple Books (iPhone + Mac) | No — opens the book, ignores the overlay | Yes — use `epub_fixedlayout.py` |
+| Thorium Reader (Mac/Win/Linux, free) | Yes — the reference test player | Yes |
+| Kobo Books / Adobe Digital Editions (iOS) | Yes (per current reports) | Yes |
+| Readest | No | No |
 
 Test on the Mac with Thorium Reader (https://www.edrlab.org/software/thorium-reader/):
 open the EPUB, press play — sentences highlight in yellow as Giuseppe reads.
+
+## epub_fixedlayout: Apple Books route (fixed layout)
+
+`epub_fixedlayout.py` is the variant that Apple Books will actually play.
+Apple Books ignores Media Overlays in reflowable EPUBs but plays them in
+fixed-layout (pre-paginated) books, so this script paginates the prepared
+reading text into fixed-size pages and emits the metadata Apple requires:
+
+- `rendition:layout` = `pre-paginated` and `rendition:viewport` in the OPF
+- A `<meta name="viewport">` in every page document
+- One XHTML + one SMIL per page; page SMILs clip into the chapter's single
+  audio file (clips are exact concatenation offsets, like epub_readaloud)
+- Pagination by character budget (`--chars-per-page`, default 900): lines
+  are never split across pages, since each line is one SMIL par/clip
+
+```bash
+# Tiny demo book (no API key needed, ~15s) — for Apple Books device QA
+python3 epub_fixedlayout.py --demo --output out/fx_demo.epub
+
+# Test slice of one chapter
+python3 epub_fixedlayout.py --epub "book.epub" --chapter 4 --slice 4000 \
+    --output out/fx_test.epub
+
+# Full book
+python3 epub_fixedlayout.py --epub "book.epub" --all --output out/fx.epub
+```
+
+Same options as `epub_readaloud.py`, plus `--chars-per-page` (default 900)
+and `--viewport WIDTHxHEIGHT` (default 768x1024, portrait). The script
+validates its own output (OPF/SMIL parse, anchors, clip monotonicity, plus
+fixed-layout metadata checks); unit tests in `tests/test_fixedlayout.py`.
+
+### Parallel synthesis
+
+All engines synthesize with `--workers` concurrent edge-tts requests
+(default 4; `--workers 1` restores the old sequential behavior). Segment
+order — and therefore the concatenation offsets and SMIL clips — is
+preserved regardless of worker count. On the 7-line demo book the synthesis
+stage dropped from ~13s to ~2s with 4 workers; a full book is expected to
+drop from ~1.5-2h to roughly 30-40 min. Unit tests with a mocked
+synthesizer: `tests/test_parallel_synth.py`.
+
+### Device QA (Apple Books)
+
+1. `python3 epub_fixedlayout.py --demo --output out/fx_demo.epub`
+2. AirDrop/transfer the file to iPhone (or open on Mac), then open in Apple
+   Books — a read-aloud play control should appear.
+3. If text overflows a page, lower `--chars-per-page` (e.g. 700) or raise
+   `--viewport`; if it looks too sparse, raise the budget.
+4. For a real chapter: `--chapter 4 --slice 4000` first, then `--all`.
+
+Known trade-off: fixed layout means no user-adjustable font size, and page
+breaks are estimated from character counts, not rendered text. Expect one
+tuning round of `--chars-per-page` per book after looking at it on device.
 
 ## Setup
 
@@ -324,7 +380,9 @@ tts-ereader/
 ├── edge_reader.py         # edge-tts hybrid engine (LLM prep + free edge voices)
 ├── epub_mo.py             # EPUB 3 Media Overlays generator (overlays on original XHTML)
 ├── epub_readaloud.py      # Simple read-along EPUB from prepared text (recommended)
+├── epub_fixedlayout.py    # Fixed-layout read-along EPUB (Apple Books route)
 ├── poc_player.html        # Web player with synced highlighting + style toggle
+├── tests/                 # Unit tests (python3 -m unittest discover tests)
 ├── voices.json            # Voice profile → voice_id mapping (basic + enhanced)
 ├── requirements.txt       # Python dependencies (mistralai, pydub, mutagen)
 ├── .env                   # API key (gitignored, you create this)
@@ -356,7 +414,7 @@ tts-ereader/
 
 The PoC is validated. The next phase would be:
 
-1. **Batch generation script**: Process all chapters of a book in the background, with parallel TTS workers to cut time from ~26h to ~9h.
+1. ~~**Batch generation script**: Process all chapters of a book in the background, with parallel TTS workers to cut time from ~26h to ~9h.~~ Done for the edge-tts engines: `--workers` (default 4) on all EPUB scripts; full-book generation is `--all`.
 2. **Web app (PWA)**: Chapter list with generation status, continuous text view with sentence-level highlighting, playback controls, progress tracking across chapters.
 3. **Backend**: Local FastAPI server that serves chapter list, triggers generation, and serves audio + manifests to the frontend.
 4. **On-demand generation**: User clicks a chapter, it generates in the background, becomes available when done.
