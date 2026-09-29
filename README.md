@@ -9,7 +9,7 @@ An AI-powered text-to-speech system that analyzes text for characters, emotion, 
 - **Italian (edge-tts hybrid)**: Good quality. `edge_reader.py` pairs Mistral LLM text preparation (cleaning, re-punctuation for speech, speaker tagging) with free Microsoft edge-tts neural voices. See "edge_reader" below.
 - **Danish**: Not supported by Voxtral. Included as a test case only.
 - **EPUB support**: Working. Text is extracted, chunked, analyzed, and synthesized per chapter.
-- **Next step**: Build a proper web app (Phase 2) with chapter navigation, background generation, and continuous reading view.
+- **v1 (in progress)**: the reader app is specified and architected — see `PLAN_v1_reader.md`, `docs/SPEC_v1.md`, and `docs/ARCHITECTURE_v1.md`. Implementation milestones M1–M4 are tracked in `ROADMAP.md`.
 
 ## Architecture
 

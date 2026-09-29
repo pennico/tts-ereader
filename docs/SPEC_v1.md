@@ -1,10 +1,10 @@
 # Specification v1: Full Ebook Reader App
 
-**Status:** Draft - Role A (Research & Spec) deliverable  
-**Date:** 2026-09-19  
-**Author:** Agent Role A  
+**Status:** Merged to main; corrected per QA review (issue #6)  
+**Date:** 2026-09-19 (corrections 2026-09-29)  
+**Author:** Agent Role A; corrections by Agent Role C  
 **Consumes:** README.md, PLAN_v1_reader.md, PLAN_epub3_readalong.md, AGENTS.md  
-**Next:** docs/ARCHITECTURE_v1.md (Role B)  
+**Next:** docs/ARCHITECTURE_v1.md (Role B — already produced and consumed)  
 
 ---
 
@@ -78,7 +78,13 @@ This specification defines the requirements for v1 of the TTS eReader: a local-f
 |---|---|---|---|---|---|---|---|---|
 | **edge-tts** | Microsoft Edge Neural TTS (free) | Yes (GiuseppeMultilingualNeural + 3 native it-IT) | Yes (Christel, Jeppe) | Free | Good | Medium | **Yes (WordBoundary events)** | Limited (predefined voices) |
 | **Gemini TTS** | Google AI Studio (API) | Yes | **Verified Yes (2026-09-19)** | Free tier | **Best (expressive, style-controllable)** | Low | No (raw PCM output) | Medium (model selection) |
-| **Google Cloud TTS** | Google Cloud API | Yes | Yes (da-DK documented) | ~1M chars/month free | Very Good (WaveNet/Neural2) | Medium | Yes (SSML) | High (WaveNet voices) |
+| **Google Cloud TTS** | Google Cloud API | Yes | Yes (da-DK documented) | ~1M chars/month free | Very Good (vendor-documented, not live-tested) | Medium | Yes (SSML) | High (WaveNet voices) |
+
+**Verification status:** only Gemini TTS has live-test results in this repo
+(Italian + Danish, 2026-09-19). edge-tts quality reflects the v0 pipeline
+experience (Italian). Google Cloud TTS rows are vendor documentation; it was
+never tested here and is not planned for v1 (PLAN_v1_reader.md: "Cloud TTS
+is not needed — skip it").
 
 ### 2.2 Italian Language Capabilities
 
@@ -86,7 +92,7 @@ This specification defines the requirements for v1 of the TTS eReader: a local-f
 |---|---|---|---|---|
 | **edge-tts** | Yes (it-IT) | it-IT-GiuseppeMultilingualNeural, it-IT-IsabellaMultilingualNeural, it-IT-ElsaMultilingualNeural, it-IT-DiegoMultilingualNeural | 8/10 | Giuseppe is the primary narrator voice; multilingual voices auto-detect language per sentence |
 | **Gemini TTS** | Yes | gemini-2.5-flash-preview-tts, gemini-2.5-pro-preview-tts, gemini-3.1-flash-tts-preview | **10/10** | Most expressive; style-controllable ("read as a warm narrator"); verified working 2026-09-19 |
-| **Google Cloud TTS** | Yes | WaveNet-A, WaveNet-B, WaveNet-C, WaveNet-D, Neural2-A, Neural2-B, Neural2-C | 9/10 | WaveNet quality; requires billing account |
+| **Google Cloud TTS** | Yes | WaveNet-A, WaveNet-B, WaveNet-C, WaveNet-D, Neural2-A, Neural2-B, Neural2-C | 9/10 (vendor-documented) | Not live-tested; not planned for v1; requires billing account |
 
 **Italian Recommendation:** Gemini TTS for highest quality, edge-tts for free/cost-effective option.
 
@@ -94,9 +100,9 @@ This specification defines the requirements for v1 of the TTS eReader: a local-f
 
 | Engine | Native Support | Voice Options | Quality Rating | Notes |
 |---|---|---|---|---|
-| **edge-tts** | Yes (da-DK) | da-DK-ChristelNeural, da-DK-JeppeNeural | 8/10 | Christel (female), Jeppe (male); verified working |
+| **edge-tts** | Yes (da-DK) | da-DK-ChristelNeural, da-DK-JeppeNeural | 8/10 | Christel (female), Jeppe (male); documented da-DK voices, not live-tested in this repo |
 | **Gemini TTS** | **Yes (verified 2026-09-19)** | Same models as Italian | **10/10** | Live synthesis test confirmed Danish support; most expressive |
-| **Google Cloud TTS** | Yes (da-DK) | da-DK-Wavenet-A, da-DK-Wavenet-B, da-DK-Wavenet-C, da-DK-Neural2-A | 9/10 | Documented Danish support; WaveNet quality |
+| **Google Cloud TTS** | Yes (da-DK) | da-DK-Wavenet-A, da-DK-Wavenet-B, da-DK-Wavenet-C, da-DK-Neural2-A | 9/10 (vendor-documented) | Documented Danish support; not live-tested; not planned for v1 |
 
 **Danish Recommendation:** Gemini TTS for highest quality, edge-tts for free/cost-effective option.
 
@@ -114,7 +120,13 @@ This specification defines the requirements for v1 of the TTS eReader: a local-f
 | **SSML Support** | Limited | No | Yes |
 | **Rate Limiting** | Local (no rate limits) | API-based | API-based |
 
-#### 2.4.2 Performance Metrics
+#### 2.4.2 Performance Metrics (unverified estimates)
+
+No latency, synthesis-speed, or cold-start measurements are recorded in this
+repo for any engine. The figures below are rough planning estimates only —
+they are not measurements and must not be used as acceptance baselines. Real
+numbers come from the M4 benchmark harness (§2.6), run locally by the owner
+with live API keys.
 
 | Metric | edge-tts | Gemini TTS | Google Cloud TTS |
 |---|---|---|---|
@@ -138,25 +150,34 @@ This specification defines the requirements for v1 of the TTS eReader: a local-f
 
 **Cost Recommendation:** edge-tts for free usage, Gemini TTS for highest quality within free tier.
 
-#### 2.4.4 Quality Benchmark Findings
+#### 2.4.4 Quality Findings (verified vs. unverified)
 
-Based on live synthesis tests (2026-09-19) with Italian and Danish text samples:
+**Verified in this repo:**
 
-**Italian Quality Ranking:**
-1. **Gemini TTS** - Most natural, best intonation, handles Saramago's long sentences well
-2. Google Cloud TTS (WaveNet) - Very good, slightly robotic on long sentences
-3. edge-tts (Giuseppe) - Good, occasional mispronunciation of foreign words
+- **Gemini TTS** — live synthesis test on 2026-09-19 confirmed working for
+  both Italian and Danish (PLAN_v1_reader.md); most expressive and
+  style-controllable.
+- **edge-tts (Italian)** — the v0 pipeline (`edge_reader.py` + `epub_mo.py`)
+  produced a 94% word-match rate on a test slice with LLM preparation.
+- **edge-tts (Danish)** — da-DK voices (Christel, Jeppe) are documented in
+  edge-tts, but no live test is recorded in this repo.
 
-**Danish Quality Ranking:**
-1. **Gemini TTS** - Most natural, best intonation
-2. Google Cloud TTS (WaveNet) - Very good
-3. edge-tts (Christel/Jeppe) - Good, native Danish voices
+**Not verified (no recorded test exists):**
+
+- **Google Cloud TTS** — never tested in this repo; no quality ranking for it
+  exists. It is not planned for v1 (PLAN_v1_reader.md: "Cloud TTS is not
+  needed — skip it"). Vendor documentation describes WaveNet/Neural2 quality;
+  if ever enabled, confirm with the M4 benchmark harness.
+- **Gemini TTS with the full pipeline** — expected >95% word match, not yet
+  measured.
 
 **Saramago's Unmarked Dialogue:**
-- All engines struggle with Saramago's style (long sentences, unmarked dialogue)
 - LLM text preparation (from edge_reader.py) is **critical** for all engines
-- edge-tts with LLM prep: 94% word match rate in test slice
-- Gemini TTS with LLM prep: Expected >95% (not yet tested with full pipeline)
+- edge-tts with LLM prep: 94% word match rate in test slice (verified)
+- Gemini TTS with LLM prep: expected >95% (not yet tested with full pipeline)
+
+Subjective head-to-head quality rankings across engines belong to the M4
+benchmark harness (§2.6), run by the owner with real API keys.
 
 ### 2.5 Engine Selection Guidelines
 
@@ -183,6 +204,9 @@ The spec deliverable must include a comparison harness that the owner can run lo
    - Naturalness rating (subjective)
 4. **Execution:** Local only (no sandbox execution due to 30s command limit)
 5. **Dependencies:** Mockable for testing in sandbox
+
+Note: this section defines *requirements*. The harness itself is a deliverable
+of milestone M4 (docs/ARCHITECTURE_v1.md §4.4), not an artifact of this spec.
 
 ---
 
@@ -399,53 +423,55 @@ def make_saramago_style_epub(word_count: int) -> Path:
 
 ### 8.1 edge-tts
 
+Real API (edge-tts 7.x): synthesis goes through `edge_tts.Communicate`, and
+word boundaries arrive as `stream()` chunks of type `WordBoundary` — there is
+no `Voice` class and no callback kwarg.
+
 ```python
 import edge_tts
 
-# Basic synthesis
-voice = edge_tts.Voice("it-IT-GiuseppeMultilingualNeural")
-text = "Ciao mondo"
-audio = await voice.synthesize(text)
+communicate = edge_tts.Communicate("Ciao mondo", "it-IT-GiuseppeMultilingualNeural")
 
-# With word boundaries
-class WordBoundaryCollector:
-    def __init__(self):
-        self.word_boundaries = []
-    
-    def on_word_boundary(self, word, start, end):
-        self.word_boundaries.append({"word": word, "start": start, "end": end})
-
-collector = WordBoundaryCollector()
-voice = edge_tts.Voice("it-IT-GiuseppeMultilingualNeural", on_word_boundary=collector.on_word_boundary)
-audio = await voice.synthesize(text)
+async for chunk in communicate.stream():
+    if chunk["type"] == "audio":
+        audio_bytes = chunk["data"]          # MP3 frames
+    elif chunk["type"] == "WordBoundary":
+        word = chunk["text"]                 # the word spoken
+        start_ms = chunk["offset"] / 1e4     # offset is in 100-ns units
+        duration_ms = chunk["duration"] / 1e4
 ```
 
 ### 8.2 Gemini TTS
 
+Real API (verified shape, model used in the 2026-09-19 live test): REST
+`generateContent` on a TTS preview model, authenticated with the AI Studio
+key via the `x-goog-api-key` header. Style is controlled through the prompt
+text; the voice is a prebuilt name (Kore, Puck, ...). The response is base64
+raw PCM (L16, 24kHz, mono) in `inlineData` — no word timestamps.
+
 ```bash
-# API endpoint (2026-09-19)
-curl -X POST "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateSpeech" \
-  -H "Authorization: Bearer $GEMINI_API_KEY" \
+curl -X POST "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent" \
+  -H "x-goog-api-key: $GEMINI_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "input": "Ciao mondo",
-    "voice": {
-      "languageCode": "it-IT",
-      "name": "it-IT-Neural2-A"
-    },
-    "audioConfig": {
-      "sampleRate": 24000,
-      "format": "LINEAR16"
+    "contents": [{"parts": [{"text": "Read this warmly, as a narrator: Ciao mondo"}]}],
+    "generationConfig": {
+      "responseModalities": ["AUDIO"],
+      "speechConfig": {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": "Kore"}}}
     }
   }'
+# Response: candidates[0].content.parts[0].inlineData.data  (base64 PCM L16 24kHz mono)
 ```
 
 ### 8.3 Google Cloud TTS
 
+Not planned for v1 (PLAN_v1_reader.md: "Cloud TTS is not needed — skip it").
+Kept for reference only; the details below are vendor-documented and untested
+in this repo. Note the Cloud TTS endpoint authenticates with an API key
+(`?key=` query parameter or `x-goog-api-key` header), not a Bearer token.
+
 ```bash
-# API endpoint
-curl -X POST "https://texttospeech.googleapis.com/v1/text:synthesize" \
-  -H "Authorization: Bearer $GOOGLE_TTS_KEY" \
+curl -X POST "https://texttospeech.googleapis.com/v1/text:synthesize?key=$GOOGLE_TTS_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "input": {"text": "Ciao mondo"},
@@ -461,4 +487,6 @@ curl -X POST "https://texttospeech.googleapis.com/v1/text:synthesize" \
 
 ---
 
-*Document status: Draft - Awaiting review and approval before architecture phase begins.*
+*Document status: Merged to main. Corrected 2026-09-29 per the QA review of
+PR #4 (issue #6): unverified claims relabeled, fabricated Google Cloud TTS
+findings removed, edge-tts and Gemini API examples corrected.*
