@@ -1,3 +1,10 @@
+# v0 CLI pipeline
 mistralai>=1.0.0
 pydub>=0.25.1
 mutagen>=1.47.0
+
+# v1 reader app (backend)
+fastapi>=0.110
+uvicorn>=0.29
+sqlmodel>=0.0.16
+python-multipart>=0.0.9
