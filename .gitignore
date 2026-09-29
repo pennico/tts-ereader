@@ -20,3 +20,5 @@ node_modules/
 frontend/dist/
 *.tsbuildinfo
 coverage/
+.coverage
+htmlcov/

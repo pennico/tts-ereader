@@ -1,6 +1,6 @@
 # v0 CLI pipeline
 edge-tts>=7.0
-mistralai>=1.0.0
+mistralai>=1.0.0,<2
 pydub>=0.25.1
 mutagen>=1.47.0
 
