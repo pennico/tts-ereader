@@ -92,3 +92,11 @@ input[type="range"] {
 .muted {
   color: var(--muted);
 }
+
+.offline-banner {
+  background: #b33;
+  color: #fff;
+  padding: 8px 16px;
+  font-size: 14px;
+  text-align: center;
+}

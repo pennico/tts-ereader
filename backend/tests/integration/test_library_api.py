@@ -14,7 +14,13 @@ def _import(client, epub_path: Path):
 def test_health(client):
     resp = client.get("/api/health")
     assert resp.status_code == 200
-    assert resp.json() == {"status": "ok"}
+    body = resp.json()
+    assert body["status"] == "ok"
+    assert body["data_dir_writable"] is True
+    assert body["version"]
+    # Engine availability is reported for monitoring (keys absent in tests).
+    engines = {e["name"]: e["available"] for e in body["engines"]}
+    assert "gemini" in engines and "edge" in engines
 
 
 def test_import_and_list(client, fixture_epubs):
