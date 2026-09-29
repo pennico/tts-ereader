@@ -32,15 +32,15 @@ def create_app() -> FastAPI:
     app.include_router(library.router)
     app.include_router(reader.router)
 
-    # Serve the built frontend when it exists (local-first single-server
-    # deployment, ARCHITECTURE_v1 §6). API routes are registered first, so
-    # they take precedence; html=True gives the SPA index.html fallback.
-    if FRONTEND_DIST.is_dir():
-        app.mount("/", StaticFiles(directory=FRONTEND_DIST, html=True), name="frontend")
-
     @app.get("/api/health")
     def health():
         return {"status": "ok"}
+
+    # Serve the built frontend when it exists (local-first single-server
+    # deployment, ARCHITECTURE_v1 §6). Registered last so API routes (including
+    # /api/health above) take precedence; html=True gives the SPA fallback.
+    if FRONTEND_DIST.is_dir():
+        app.mount("/", StaticFiles(directory=FRONTEND_DIST, html=True), name="frontend")
 
     return app
 
