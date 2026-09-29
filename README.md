@@ -475,8 +475,21 @@ Gemini TTS needs `GEMINI_API_KEY` in `.env`; without it the engine shows as
 unavailable and synthesis falls back to edge-tts automatically. LLM
 preparation needs `MISTRAL_API_KEY`; without it the cast toggle reports the
 error and the reader falls back to plain single-voice narration. Live Gemini
-synthesis was verified by the owner on 2026-09-19 for Italian and Danish; the
+synthesis was verified by the owner on 2026-09-19 for Italian and Danish
+(short texts, voice Kore) and on 2026-09-29 for English (Guns, Germs, and
+Steel chapter 1 opening, ~1,100 chars, voices Kore and Charon); the
 sandbox only exercises engines through mocks plus free edge-tts smoke tests.
+
+Known limitation (seen live 2026-09-29): `GeminiTTSEngine`'s httpx client
+uses a 30 s read timeout, which is too tight for requests beyond roughly
+1,000 characters — the same ~1,100-char sample succeeded with Kore but
+timed out twice with Charon until retried with a 120 s client (the engine
+accepts an injectable `client`). Batch generation should chunk to short
+lines (the prepared-lines pipeline already does) or raise the timeout.
+Gemini TTS on an AI Studio key is free-tier: ~15 requests/min and
+~1,500 requests/day for `gemini-2.5-flash-preview-tts` — a full book at
+line granularity fits comfortably, but full-chapter single requests do
+not (and would hit the timeout above first).
 
 ```bash
 pip3 install -r requirements.txt -r requirements-dev.txt
