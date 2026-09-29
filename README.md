@@ -9,7 +9,7 @@ An AI-powered text-to-speech system that analyzes text for characters, emotion, 
 - **Italian (edge-tts hybrid)**: Good quality. `edge_reader.py` pairs Mistral LLM text preparation (cleaning, re-punctuation for speech, speaker tagging) with free Microsoft edge-tts neural voices. See "edge_reader" below.
 - **Danish**: Not supported by Voxtral. Included as a test case only.
 - **EPUB support**: Working. Text is extracted, chunked, analyzed, and synthesized per chapter.
-- **v1 (in progress)**: the reader app is specified and architected — see `PLAN_v1_reader.md`, `docs/SPEC_v1.md`, and `docs/ARCHITECTURE_v1.md`. M1 (library + reader view) is implemented; milestones M1–M4 are tracked in `ROADMAP.md`.
+- **v1 (in progress)**: the reader app is specified and architected — see `PLAN_v1_reader.md`, `docs/SPEC_v1.md`, and `docs/ARCHITECTURE_v1.md`. M1 (library + reader view) and M2 (TTS engines + voice-by-progression) are implemented; milestones M1–M4 are tracked in `ROADMAP.md`.
 
 ## Architecture
 
@@ -384,13 +384,13 @@ tts-ereader/
 ├── poc_player.html        # Web player with synced highlighting + style toggle
 ├── tests/                 # v0 unit tests (python3 -m unittest discover tests)
 │   └── fixtures/make_fixture_epub.py  # Synthetic EPUB generator (no copyrighted books)
-├── backend/               # v1 reader app (M1 — see docs/ARCHITECTURE_v1.md)
-│   ├── app/               # FastAPI: library/reader API, EPUB parser, SQLite models
-│   └── tests/             # pytest unit + integration tests (22 passing)
+├── backend/               # v1 reader app (M1+M2 — see docs/ARCHITECTURE_v1.md)
+│   ├── app/               # FastAPI: library/reader/TTS API, EPUB parser, TTS engines
+│   └── tests/             # pytest unit + integration tests (49 passing)
 ├── frontend/              # v1 reader UI (Svelte 4 + Vite + TypeScript)
 │   ├── src/lib/pages/     # Library and Reader pages
-│   ├── src/lib/components/# BookCard, ChapterNav, SettingsPanel
-│   └── src/lib/           # api client, settings store, pagination/theme utils
+│   ├── src/lib/components/# BookCard, ChapterNav, SettingsPanel, VoicePanel, SentenceContent
+│   └── src/lib/           # api client, settings/tts stores, audio engine, sync, sentence utils
 ├── voices.json            # Voice profile → voice_id mapping (basic + enhanced)
 ├── requirements.txt       # Python dependencies (mistralai, pydub, mutagen)
 ├── .env                   # API key (gitignored, you create this)
@@ -409,7 +409,7 @@ tts-ereader/
     └── ggs_ch3/           # Guns, Germs, and Steel preface
 ```
 
-## v1 reader app (M1: library + reader view)
+## v1 reader app (M1: library + reader view; M2: TTS + voice-by-progression)
 
 The v1 app is in `backend/` (FastAPI + SQLite via SQLModel) and `frontend/`
 (Svelte 4 + Vite + TypeScript), per `docs/ARCHITECTURE_v1.md`. M1 delivers:
@@ -423,6 +423,32 @@ The v1 app is in `backend/` (FastAPI + SQLite via SQLModel) and `frontend/`
   scroll and paginated modes with toggle, auto-advance/auto-scroll with
   configurable speed, progress saved per book and restored on open,
   lang-aware hyphenation for European typography.
+
+M2 adds TTS and the voice-by-progression read-along:
+
+- Pluggable `TTSEngine` interface (`backend/app/engines/`): Gemini TTS
+  adapter (primary, REST, PCM wrapped as WAV) and edge-tts adapter (free
+  fallback, word-boundary timestamps, MP3 normalized to WAV via pydub/ffmpeg
+  when available). Engines are looked up through a factory with automatic
+  fallback (requested engine first, then Gemini, then edge-tts).
+- TTS API: `GET /api/tts/engines`, `GET /api/tts/engines/{name}/voices`,
+  `POST /api/tts/synthesize`, `POST /api/tts/synthesize-batch`. All synthesis
+  is cached on disk under `data/audio_cache/` keyed by engine+voice+params+
+  text hash, so re-reading is instant.
+- Reader read-along: the chapter is split into sentences (Italian/Danish
+  abbreviations, quotes, dialogue dashes handled); tapping any sentence
+  synthesizes a window from there and reads aloud ("tap-to-read"); the spoken
+  sentence is highlighted and the view follows the voice (scroll or page
+  turn); manual scroll/page-turn repositions the voice; when the voice
+  finishes the chapter it auto-advances to the next one (toggleable). Playback
+  rate 0.5x–2x is applied client-side via Web Audio `playbackRate`.
+- Per-book voice settings (engine, voice, rate, auto-advance) in the reader's
+  Voice panel, persisted to localStorage per book.
+
+Gemini TTS needs `GEMINI_API_KEY` in `.env`; without it the engine shows as
+unavailable and synthesis falls back to edge-tts automatically. Live Gemini
+synthesis was verified by the owner on 2026-09-19 for Italian and Danish; the
+sandbox only exercises engines through mocks plus free edge-tts smoke tests.
 
 ```bash
 pip3 install -r requirements.txt -r requirements-dev.txt
@@ -447,9 +473,9 @@ cd frontend && npm run build
 cd .. && python3 -m uvicorn app.main:app --app-dir backend
 ```
 
-Not yet implemented: TTS and voice-by-progression (M2), voice tuning +
-LLM preparation integration (M3), Docker deployment + benchmark (M4) —
-see `ROADMAP.md`.
+Not yet implemented: voice tuning UI + LLM preparation integration with
+per-book voice casts (M3), Docker deployment + benchmark (M4) — see
+`ROADMAP.md`.
 
 ## Technical notes
 
