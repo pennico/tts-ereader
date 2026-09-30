@@ -8,11 +8,10 @@ from __future__ import annotations
 
 import html.parser
 import re
-import zipfile
 import xml.etree.ElementTree as ET
+import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional
 
 XHTML_MEDIA_TYPES = {"application/xhtml+xml", "text/html"}
 IMAGE_MEDIA_TYPES = {"image/jpeg", "image/png", "image/gif", "image/svg+xml"}
@@ -34,9 +33,9 @@ class ParsedBook:
     title: str
     author: str
     language: str
-    chapters: List[ParsedChapter] = field(default_factory=list)
-    cover: Optional[bytes] = None
-    cover_media_type: Optional[str] = None
+    chapters: list[ParsedChapter] = field(default_factory=list)
+    cover: bytes | None = None
+    cover_media_type: str | None = None
 
 
 class _HTMLStripper(html.parser.HTMLParser):
@@ -47,7 +46,7 @@ class _HTMLStripper(html.parser.HTMLParser):
         self.text = []
         self._skip = False
         self._in_title = False
-        self.title_parts: List[str] = []
+        self.title_parts: list[str] = []
 
     def handle_starttag(self, tag, attrs):
         if tag in ("script", "style"):
@@ -85,7 +84,7 @@ def _read_text(z: zipfile.ZipFile, name: str) -> str:
     return z.read(name).decode("utf-8", errors="replace")
 
 
-def _opf_path(z: zipfile.ZipFile) -> Optional[str]:
+def _opf_path(z: zipfile.ZipFile) -> str | None:
     """Locate the OPF via META-INF/container.xml, or None."""
     try:
         container = _read_text(z, "META-INF/container.xml")
@@ -127,7 +126,7 @@ def _parse_opf(opf_xml: str):
     return title, author, language, manifest, spine
 
 
-def _fallback_chapter_hrefs(z: zipfile.ZipFile) -> List[str]:
+def _fallback_chapter_hrefs(z: zipfile.ZipFile) -> list[str]:
     """v0 heuristic (poc_reader.py): all HTML files, sorted by name."""
     return sorted(
         name for name in z.namelist()
@@ -187,7 +186,7 @@ def parse_epub(epub_path: Path) -> ParsedBook:
             opf_dir = ""
             chapter_hrefs = _fallback_chapter_hrefs(z)
 
-        chapters: List[ParsedChapter] = []
+        chapters: list[ParsedChapter] = []
         for index, href in enumerate(chapter_hrefs):
             if href not in names:
                 continue
@@ -220,7 +219,7 @@ def parse_epub(epub_path: Path) -> ParsedBook:
         )
 
 
-def _fallback_title(chapters: List[ParsedChapter]) -> str:
+def _fallback_title(chapters: list[ParsedChapter]) -> str:
     """AC-005: graceful fallback when metadata is missing."""
     if chapters:
         return chapters[0].title

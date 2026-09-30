@@ -12,12 +12,10 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import List, Optional, Tuple
 
 try:  # pragma: no cover - import bootstrap for non-repo-root working dirs
-    from shared.text_preparation import (  # noqa: E402
+    from shared.text_preparation import (
         chunk_text,
-        detect_language,
         llm_prepare,
         normalize_language,
         parse_lines,
@@ -25,9 +23,8 @@ try:  # pragma: no cover - import bootstrap for non-repo-root working dirs
     )
 except ImportError:
     sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
-    from shared.text_preparation import (  # noqa: E402
+    from shared.text_preparation import (
         chunk_text,
-        detect_language,
         llm_prepare,
         normalize_language,
         parse_lines,
@@ -79,7 +76,7 @@ def prepare_text(
     return "\n\n".join(parts)
 
 
-def segment_lines(prepared: str) -> List[Tuple[Optional[str], Optional[str], str]]:
+def segment_lines(prepared: str) -> list[tuple[str | None, str | None, str]]:
     """Prepared text -> (speaker, gender, text) lines ready for the cast."""
     return split_long_narration(parse_lines(prepared))
 
@@ -91,7 +88,7 @@ def prepared_cache_path(settings, book_id: int, chapter_index: int) -> Path:
     return settings.data_dir / "prepared" / f"{book_id}_{chapter_index}.json"
 
 
-def load_prepared(settings, book_id: int, chapter_index: int) -> Optional[dict]:
+def load_prepared(settings, book_id: int, chapter_index: int) -> dict | None:
     """Cached preparation: {language, prepared_text, lines: [[s, g, text]]}."""
     path = prepared_cache_path(settings, book_id, chapter_index)
     if not path.is_file():

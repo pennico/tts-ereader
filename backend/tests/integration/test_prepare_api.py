@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.engines import factory
 from app.services import llm_service
+
 from tests.mock_engine import MockTTSEngine
 
 PREPARED_IT = (

@@ -11,10 +11,9 @@ sys.path.insert(0, str(REPO_ROOT))  # shared/ (M3 preparation + voice cast)
 sys.path.insert(0, str(REPO_ROOT / "backend"))
 sys.path.insert(0, str(REPO_ROOT / "tests" / "fixtures"))
 
-from make_fixture_epub import make_all_fixtures  # noqa: E402
-
 from app.core.config import Settings  # noqa: E402
 from app.core.database import reset_engine_for_tests  # noqa: E402
+from make_fixture_epub import make_all_fixtures  # noqa: E402
 
 
 @pytest.fixture()
@@ -33,10 +32,9 @@ def client(settings: Settings):
     os.environ["TTSEREADER_DATA_DIR"] = str(settings.data_dir)
     reset_engine_for_tests()
 
-    from fastapi.testclient import TestClient
-
     from app.core.database import init_db
     from app.main import create_app
+    from fastapi.testclient import TestClient
 
     init_db(settings)
     app = create_app()

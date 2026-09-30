@@ -6,11 +6,9 @@ then the remaining available engines (primary Gemini, free fallback edge).
 """
 from __future__ import annotations
 
-from typing import Dict, List, Optional
-
 from app.engines.base import EngineError, TTSEngine
 
-_REGISTRY: Dict[str, TTSEngine] = {}
+_REGISTRY: dict[str, TTSEngine] = {}
 _FALLBACK_ORDER = ["gemini", "edge"]
 
 
@@ -24,15 +22,15 @@ def get_engine(name: str) -> TTSEngine:
     return _REGISTRY[name]
 
 
-def list_engines() -> List[TTSEngine]:
+def list_engines() -> list[TTSEngine]:
     ordered = [n for n in _FALLBACK_ORDER if n in _REGISTRY]
     ordered += [n for n in _REGISTRY if n not in ordered]
     return [_REGISTRY[n] for n in ordered]
 
 
-def fallback_chain(requested: Optional[str]) -> List[TTSEngine]:
+def fallback_chain(requested: str | None) -> list[TTSEngine]:
     """Available engines, requested first, then the documented order."""
-    names: List[str] = []
+    names: list[str] = []
     if requested:
         names.append(requested)
     names += [n for n in _FALLBACK_ORDER if n not in names]

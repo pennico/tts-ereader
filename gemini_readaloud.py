@@ -40,15 +40,23 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 sys.path.insert(0, str(SCRIPT_DIR / "backend"))
 
-from poc_reader import chunk_text, extract_epub_chapter, list_epub_chapters  # noqa: E402
+from app.engines.gemini import GeminiTTSEngine  # noqa: E402
+
 from epub_mo import clock_value, validate  # noqa: E402
 from epub_readaloud import (  # noqa: E402
-    CSS, CONTAINER, build_opf, chapter_smil, chapter_xhtml, nav_doc,
-    slice_text, source_metadata, strip_title_leak,
+    CONTAINER,
+    CSS,
+    build_opf,
+    chapter_smil,
+    chapter_xhtml,
+    nav_doc,
+    slice_text,
+    source_metadata,
+    strip_title_leak,
 )
-from shared.text_preparation import llm_prepare, parse_lines, split_long_narration  # noqa: E402
+from poc_reader import chunk_text, extract_epub_chapter, list_epub_chapters  # noqa: E402
 from shared.audio_clean import clean_pcm  # noqa: E402
-from app.engines.gemini import GeminiTTSEngine  # noqa: E402
+from shared.text_preparation import llm_prepare, parse_lines, split_long_narration  # noqa: E402
 
 RATE_DEFAULT = 24000  # Gemini TTS output sample rate
 

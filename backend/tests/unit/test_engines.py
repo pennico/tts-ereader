@@ -6,13 +6,11 @@ import sys
 import types
 
 import pytest
-
-from app.engines.base import EngineError, SynthesisResult, WordBoundary
 from app.engines import edge_tts as edge_module
+from app.engines.base import EngineError
 from app.engines.edge_tts import EdgeTTSEngine, _pitch_str, _rate_str
 from app.engines.gemini import GeminiTTSEngine
 from app.utils.audio import pcm_to_wav, wav_duration_ms
-
 
 # ── utils/audio ────────────────────────────────────────────────────────────
 

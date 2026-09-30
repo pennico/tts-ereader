@@ -1,0 +1,21 @@
+# Ruff: lint what matters, ignore deliberate patterns.
+# - BLE001 blind-except: pipelines are deliberately resilient (notify-and-continue)
+# - DTZ005 naive datetime: local time is intentional (cron runs on homelab CET)
+# - B008 call-in-default: FastAPI Depends pattern in backend/
+line-length = 120
+
+[lint]
+select = ["E", "W", "F", "I", "B", "UP", "RUF100"]
+ignore = [
+  "B008",  # FastAPI Depends pattern in backend/
+  "B017",  # pytest.raises without match in tests
+  "BLE001",  # blind-except: pipelines are deliberately resilient
+  "DTZ005",  # naive datetime: local time is intentional (homelab cron, CET)
+  "E501",  # long lines: LLM prompt strings are deliberately long
+  # gradual adoption — fix opportunistically, do not add new instances:
+  "B007", "B905", "B904", "E741", "UP031",
+]
+
+[lint.per-file-ignores]
+# conftest imports Mistral to decide whether to stub the module
+"tests/conftest.py" = ["F401"]

@@ -32,22 +32,20 @@ import os
 import re
 import sys
 import time
-import zipfile
 import xml.etree.ElementTree as ET
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from xml.sax.saxutils import escape, quoteattr
 
 import edge_tts
+
 try:
     from mistralai import Mistral
 except ImportError:  # mistralai 2.x: client moved off the top level
     from mistralai.client import Mistral
 
-from poc_reader import chunk_text, list_epub_chapters
 from edge_reader import (
-    GAP_SAME_MS,
-    GAP_SWITCH_MS,
     LLM_MODEL_DEFAULT,
     RATE_DEFAULT,
     WORKERS_DEFAULT,
@@ -58,6 +56,7 @@ from edge_reader import (
     parse_lines,
     split_long_narration,
 )
+from poc_reader import chunk_text, list_epub_chapters
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 

@@ -11,10 +11,10 @@ import sys
 import types
 
 try:
-    from mistralai import Mistral  # noqa: F401
+    from mistralai import Mistral
 except Exception:
     try:  # mistralai 2.x: client moved off the top level
-        from mistralai.client import Mistral  # noqa: F401
+        from mistralai.client import Mistral
     except Exception:
         stub = types.ModuleType("mistralai")
 

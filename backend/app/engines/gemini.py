@@ -13,7 +13,6 @@ from __future__ import annotations
 import base64
 import os
 import re
-from typing import List, Optional
 
 from app.engines.base import EngineError, SynthesisResult, TTSEngine
 from app.utils.audio import pcm_to_wav
@@ -41,7 +40,7 @@ class GeminiTTSEngine(TTSEngine):
         self,
         model: str = DEFAULT_MODEL,
         style: str = DEFAULT_STYLE,
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
         client=None,
     ):
         """client: injectable httpx-like async client (tests pass a mock)."""
@@ -58,7 +57,7 @@ class GeminiTTSEngine(TTSEngine):
     def display_name(self) -> str:
         return "Gemini TTS"
 
-    def _key(self) -> Optional[str]:
+    def _key(self) -> str | None:
         return self._api_key or os.environ.get("GEMINI_API_KEY")
 
     def is_available(self) -> bool:
@@ -88,7 +87,7 @@ class GeminiTTSEngine(TTSEngine):
             )
         return resp.json()
 
-    async def list_voices(self, language: Optional[str] = None) -> List[dict]:
+    async def list_voices(self, language: str | None = None) -> list[dict]:
         # Prebuilt voices are language-agnostic (multilingual).
         return [
             {"name": name, "display_name": name, "gender": gender, "locale": ""}

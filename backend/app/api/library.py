@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 import zipfile
-from typing import List, Optional
-
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
@@ -24,7 +22,7 @@ class BookOut(BaseModel):
     title: str
     author: str
     language: str
-    cover_path: Optional[str] = None
+    cover_path: str | None = None
     chapter_count: int = 0
     progress_chapter: int = 0
     progress_position: float = 0.0
@@ -74,7 +72,7 @@ def import_book(
     return _book_out(session, book)
 
 
-@router.get("", response_model=List[BookOut])
+@router.get("", response_model=list[BookOut])
 def list_books(session: Session = Depends(get_session)):
     return [_book_out(session, book) for book in library_service.list_books(session)]
 

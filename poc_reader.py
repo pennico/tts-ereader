@@ -403,7 +403,7 @@ def synthesize_segment(api_key, text, voice_id=None, ref_audio_b64=None,
             data = resp.json()
             audio_b64 = data.get("audio_data")
             if not audio_b64:
-                print(f"  ERROR: no audio_data in response")
+                print("  ERROR: no audio_data in response")
                 return None
             return base64.b64decode(audio_b64)
 
@@ -502,7 +502,7 @@ def concatenate_binary(segment_paths, output_path, gap_ms=GAP_MS):
 def concatenate_segments(segment_paths, output_path):
     """Try pydub first; fall back to binary concatenation if ffmpeg unavailable."""
     try:
-        from pydub import AudioSegment  # noqa: F401
+        from pydub import AudioSegment
         # Quick test that ffmpeg is actually available
         AudioSegment.from_mp3(str(segment_paths[0]))
         print("Concatenating with pydub (ffmpeg)...")
@@ -666,8 +666,8 @@ def run_pipeline(args):
     print(f"\n{'='*60}")
     print(f"DONE. {len(synthesized)}/{len(segments)} segments synthesized.")
     print(f"  Audio:  {output_mp3}")
-    print(f"  Player: open poc_player.html in a browser")
-    print(f"  Serve:  python3 -m http.server 8000  (then open http://localhost:8000/poc_player.html)")
+    print("  Player: open poc_player.html in a browser")
+    print("  Serve:  python3 -m http.server 8000  (then open http://localhost:8000/poc_player.html)")
     print(f"{'='*60}")
 
 

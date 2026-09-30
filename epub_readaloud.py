@@ -40,7 +40,6 @@ try:
 except ImportError:  # mistralai 2.x: client moved off the top level
     from mistralai.client import Mistral
 
-from poc_reader import chunk_text, extract_epub_chapter, list_epub_chapters
 from edge_reader import (
     LLM_MODEL_DEFAULT,
     RATE_DEFAULT,
@@ -54,6 +53,7 @@ from edge_reader import (
     synthesize,
 )
 from epub_mo import clock_value, validate
+from poc_reader import chunk_text, extract_epub_chapter, list_epub_chapters
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 

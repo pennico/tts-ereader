@@ -5,11 +5,11 @@ segments with hand-computed offsets and dummy audio bytes (validate only
 checks structure, it never decodes audio).
 """
 
-import re
 import unittest
 import zipfile
 from pathlib import Path
 
+from edge_reader import assign_voices, parse_lines
 from epub_fixedlayout import (
     DEMO_TEXT,
     build_book,
@@ -18,7 +18,6 @@ from epub_fixedlayout import (
     parse_viewport,
     validate_fixed,
 )
-from edge_reader import assign_voices, parse_lines
 
 TMP = Path("/tmp/tts_ereader_test_fixed")
 

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Optional
 
 from sqlmodel import Field, SQLModel
 
@@ -14,17 +13,17 @@ def utcnow() -> datetime:
 
 
 class Book(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
+    id: int | None = Field(default=None, primary_key=True)
     title: str
     author: str = "Unknown author"
     language: str = ""
     epub_path: str
-    cover_path: Optional[str] = None
+    cover_path: str | None = None
     created_at: datetime = Field(default_factory=utcnow)
 
 
 class Chapter(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
+    id: int | None = Field(default=None, primary_key=True)
     book_id: int = Field(foreign_key="book.id", index=True)
     index: int
     title: str

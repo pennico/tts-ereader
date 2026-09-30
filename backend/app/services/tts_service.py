@@ -10,7 +10,6 @@ import hashlib
 import json
 from dataclasses import asdict
 from pathlib import Path
-from typing import List, Optional
 
 from app.core.config import Settings
 from app.engines import base as engine_base
@@ -45,7 +44,7 @@ def _cache_path(settings: Settings, key: str) -> Path:
     return settings.audio_cache_dir / f"{key}.json"
 
 
-def _cache_get(settings: Settings, key: str) -> Optional[engine_base.SynthesisResult]:
+def _cache_get(settings: Settings, key: str) -> engine_base.SynthesisResult | None:
     path = _cache_path(settings, key)
     if not path.is_file():
         return None
@@ -65,7 +64,7 @@ async def synthesize(
     settings: Settings,
     text: str,
     voice: str,
-    engine_name: Optional[str] = None,
+    engine_name: str | None = None,
     rate: float = 1.0,
     pitch: float = 0.0,
 ) -> dict:
@@ -83,7 +82,7 @@ async def synthesize(
         out["cached"] = True
         return out
 
-    errors: List[str] = []
+    errors: list[str] = []
     for engine in factory.fallback_chain(engine_name):
         try:
             result = await engine.synthesize(text, voice, rate, pitch)
@@ -102,13 +101,13 @@ async def synthesize(
 
 async def synthesize_batch(
     settings: Settings,
-    texts: List[str],
+    texts: list[str],
     voice: str,
-    engine_name: Optional[str] = None,
+    engine_name: str | None = None,
     rate: float = 1.0,
     pitch: float = 0.0,
-    voices: Optional[List[str]] = None,
-) -> List[dict]:
+    voices: list[str] | None = None,
+) -> list[dict]:
     """Synthesize a window of sentences (the reader's playback unit).
 
     voices (AC-305): optional per-text voice overrides for voice-cast

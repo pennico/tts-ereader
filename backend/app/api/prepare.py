@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -33,17 +32,17 @@ router = APIRouter(prefix="/api/books/{book_id}/chapters", tags=["prepare"])
 
 
 class PrepareIn(BaseModel):
-    engine: Optional[str] = None
+    engine: str | None = None
     # role -> voice id overrides on top of the engine's default cast (AC-305)
-    cast: Optional[Dict[str, str]] = None
+    cast: dict[str, str] | None = None
     force: bool = False  # re-run the LLM even if a cached preparation exists
 
 
 class PreparedSegmentOut(BaseModel):
     index: int
     text: str
-    speaker: Optional[str] = None
-    gender: Optional[str] = None
+    speaker: str | None = None
+    gender: str | None = None
     role: str
     voice: str
 
@@ -52,7 +51,7 @@ class PreparedOut(BaseModel):
     chapter_index: int
     language: str
     cached: bool
-    segments: List[PreparedSegmentOut]
+    segments: list[PreparedSegmentOut]
 
 
 def _chapter_text(session: Session, book_id: int, chapter_index: int):
@@ -70,7 +69,7 @@ def _chapter_text(session: Session, book_id: int, chapter_index: int):
     return book, chapter
 
 
-def _resolve_cast(engine: Optional[str], language: str, overrides: Optional[Dict[str, str]]):
+def _resolve_cast(engine: str | None, language: str, overrides: dict[str, str] | None):
     """Default cast for the engine+language, with per-book overrides applied."""
     defaults = voice_cast.default_cast(engine or "gemini", language)
     cast = {role: voice for role, (voice, _name) in defaults.items()}
@@ -135,7 +134,7 @@ def prepare_chapter(
 def get_prepared_chapter(
     book_id: int,
     chapter_index: int,
-    engine: Optional[str] = None,
+    engine: str | None = None,
     session: Session = Depends(get_session),
     settings: Settings = Depends(get_settings),
 ):
