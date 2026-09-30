@@ -147,8 +147,11 @@ def get_client():
     try:
         from mistralai import Mistral
     except ImportError:
-        print("ERROR: mistralai not installed. Run: pip install mistralai")
-        sys.exit(1)
+        try:  # mistralai 2.x: client moved off the top level
+            from mistralai.client import Mistral
+        except ImportError:
+            print("ERROR: mistralai not installed. Run: pip install mistralai")
+            sys.exit(1)
     return Mistral(api_key=api_key)
 
 
