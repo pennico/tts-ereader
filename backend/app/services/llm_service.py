@@ -54,7 +54,10 @@ def get_client():
         raise LLMUnavailableError(
             "MISTRAL_API_KEY not set; LLM text preparation is unavailable"
         )
-    from mistralai import Mistral
+    try:
+        from mistralai import Mistral
+    except ImportError:  # mistralai 2.x: client moved off the top level
+        from mistralai.client import Mistral
 
     return Mistral(api_key=api_key)
 

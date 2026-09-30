@@ -239,7 +239,10 @@ def main():
         print("ERROR: GEMINI_API_KEY not set (env or .env)")
         sys.exit(1)
 
-    from mistralai import Mistral
+    try:
+        from mistralai import Mistral
+    except ImportError:  # mistralai 2.x: client moved off the top level
+        from mistralai.client import Mistral
     import httpx
     client = Mistral(api_key=os.environ["MISTRAL_API_KEY"])
 

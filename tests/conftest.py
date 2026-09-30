@@ -13,11 +13,14 @@ import types
 try:
     from mistralai import Mistral  # noqa: F401
 except Exception:
-    stub = types.ModuleType("mistralai")
+    try:  # mistralai 2.x: client moved off the top level
+        from mistralai.client import Mistral  # noqa: F401
+    except Exception:
+        stub = types.ModuleType("mistralai")
 
-    class _Mistral:
-        def __init__(self, *args, **kwargs):
-            raise RuntimeError("mistralai is stubbed in this environment")
+        class _Mistral:
+            def __init__(self, *args, **kwargs):
+                raise RuntimeError("mistralai is stubbed in this environment")
 
-    stub.Mistral = _Mistral
-    sys.modules["mistralai"] = stub
+        stub.Mistral = _Mistral
+        sys.modules["mistralai"] = stub

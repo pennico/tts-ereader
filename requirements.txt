@@ -1,6 +1,8 @@
 # v0 CLI pipeline
 edge-tts>=7.0
-mistralai>=1.0.0,<2
+# 1.x exports Mistral at the top level; 2.x moved it to mistralai.client
+# (all imports in this repo fall back automatically).
+mistralai>=1.0.0
 pydub>=0.25.1
 mutagen>=1.47.0
 

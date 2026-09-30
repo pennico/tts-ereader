@@ -35,7 +35,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from xml.sax.saxutils import escape
 
-from mistralai import Mistral
+try:
+    from mistralai import Mistral
+except ImportError:  # mistralai 2.x: client moved off the top level
+    from mistralai.client import Mistral
 
 from poc_reader import chunk_text, extract_epub_chapter, list_epub_chapters
 from edge_reader import (

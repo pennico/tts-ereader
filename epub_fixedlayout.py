@@ -462,7 +462,10 @@ def main():
         print("ERROR: MISTRAL_API_KEY not set (env or .env). Get one at https://console.mistral.ai")
         sys.exit(1)
 
-    from mistralai import Mistral
+    try:
+        from mistralai import Mistral
+    except ImportError:  # mistralai 2.x: client moved off the top level
+        from mistralai.client import Mistral
     client = Mistral(api_key=os.environ["MISTRAL_API_KEY"])
 
     work_dir = Path(args.work_dir)

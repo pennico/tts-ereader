@@ -32,7 +32,10 @@ import time
 from pathlib import Path
 
 import edge_tts
-from mistralai import Mistral
+try:
+    from mistralai import Mistral
+except ImportError:  # mistralai 2.x: client moved off the top level
+    from mistralai.client import Mistral
 from pydub import AudioSegment
 
 from poc_reader import chunk_text, extract_epub_chapter, list_epub_chapters
