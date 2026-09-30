@@ -7,6 +7,11 @@ Read `README.md`, `PLAN_epub3_readalong.md` (v0 history), and
 decided questions (voice cast, book-level delivery, web-app-with-known-iOS-
 limitation trade-off).
 
+Cross-cutting operational standards (homelab environment, quotas,
+scheduled jobs, publish pipeline) live in
+[AGENTIC_WORK_STANDARDS.md](https://github.com/pennico/pennico-ops/blob/main/AGENTIC_WORK_STANDARDS.md)
+in pennico-ops.
+
 ## Versioning
 
 - `v0` (git tag): the CLI pipeline — `poc_reader.py`, `edge_reader.py`,
