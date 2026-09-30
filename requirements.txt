@@ -11,3 +11,6 @@ fastapi>=0.110
 uvicorn>=0.29
 sqlmodel>=0.0.16
 python-multipart>=0.0.9
+
+# poc_reader.py fetches from the Mistral/Gemini APIs via requests
+requests>=2.31

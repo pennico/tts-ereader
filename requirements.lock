@@ -17,7 +17,11 @@ anyio==4.15.1
 attrs==26.1.0
     # via aiohttp
 certifi==2026.7.22
-    # via edge-tts
+    # via
+    #   edge-tts
+    #   requests
+charset-normalizer==3.5.2
+    # via requests
 click==8.5.0
     # via uvicorn
 edge-tts==7.2.8
@@ -42,6 +46,7 @@ idna==3.20
     # via
     #   anyio
     #   httpx2
+    #   requests
     #   yarl
 jsonpath-python==1.1.6
     # via mistralai
@@ -76,6 +81,8 @@ pydub==0.25.1
 python-dateutil==2.9.0.post0
     # via mistralai
 python-multipart==0.0.32
+    # via -r requirements.txt
+requests==2.34.2
     # via -r requirements.txt
 six==1.17.0
     # via python-dateutil
@@ -112,6 +119,8 @@ typing-inspection==0.4.4
     #   fastapi
     #   mistralai
     #   pydantic
+urllib3==2.8.0
+    # via requests
 uvicorn==0.54.0
     # via -r requirements.txt
 yarl==1.25.1
