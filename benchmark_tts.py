@@ -28,7 +28,6 @@ import json
 import sys
 import time
 from pathlib import Path
-from typing import Dict, List, Optional
 
 REPO_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(REPO_ROOT / "backend"))
@@ -38,7 +37,7 @@ from app.engines.base import EngineError  # noqa: E402
 
 # Short synthetic passages (no copyrighted text): narration + dialogue in the
 # style of the two optimization languages.
-SAMPLES: Dict[str, str] = {
+SAMPLES: dict[str, str] = {
     "it": (
         "La città si svegliava lentamente sotto una pioggia fine. "
         "«Non capisco perché insisti», disse Maria guardando fuori dalla finestra. "
@@ -56,11 +55,11 @@ SAMPLES: Dict[str, str] = {
 }
 
 # Acceptance budgets: synthesis wall-time per second of audio (AC-603/AC-604).
-REALTIME_BUDGET: Dict[str, float] = {"edge": 2.0, "gemini": 1.5}
+REALTIME_BUDGET: dict[str, float] = {"edge": 2.0, "gemini": 1.5}
 
 # Default voices per engine and language (multilingual for Gemini,
 # locale-specific for edge-tts).
-DEFAULT_VOICES: Dict[str, Dict[str, List[str]]] = {
+DEFAULT_VOICES: dict[str, dict[str, list[str]]] = {
     "gemini": {"it": ["Charon", "Kore"], "da": ["Charon", "Kore"]},
     "edge": {
         "it": ["it-IT-GiuseppeMultilingualNeural"],
@@ -69,9 +68,9 @@ DEFAULT_VOICES: Dict[str, Dict[str, List[str]]] = {
 }
 
 
-def parse_voices(spec: Optional[str]) -> Dict[str, List[str]]:
+def parse_voices(spec: str | None) -> dict[str, list[str]]:
     """Parse a 'engine=voice1,voice2;engine2=voice' spec into a dict."""
-    voices: Dict[str, List[str]] = {}
+    voices: dict[str, list[str]] = {}
     if not spec:
         return voices
     for part in spec.split(";"):
@@ -88,7 +87,7 @@ def _slug(part: str) -> str:
     return "".join(c if c.isalnum() or c in "-." else "_" for c in part)
 
 
-async def _voices_for(engine, lang: str, override: Dict[str, List[str]]) -> List[str]:
+async def _voices_for(engine, lang: str, override: dict[str, list[str]]) -> list[str]:
     """Override voices if given, else engine defaults, else list_voices()."""
     if engine.name in override:
         return override[engine.name]
@@ -100,19 +99,19 @@ async def _voices_for(engine, lang: str, override: Dict[str, List[str]]) -> List
 
 
 async def run_benchmark(
-    engine_names: List[str],
-    samples: Dict[str, str],
+    engine_names: list[str],
+    samples: dict[str, str],
     out_dir: Path,
-    voices_override: Optional[Dict[str, List[str]]] = None,
+    voices_override: dict[str, list[str]] | None = None,
     repeats: int = 1,
-) -> List[dict]:
+) -> list[dict]:
     """Synthesize every (engine, voice, language) combination; return result rows.
 
     Rows carry either a measurement or a skip/error reason, so the report
     always covers every requested combination.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
-    rows: List[dict] = []
+    rows: list[dict] = []
     for name in engine_names:
         try:
             engine = factory.get_engine(name)
@@ -167,13 +166,13 @@ async def run_benchmark(
     return rows
 
 
-def write_report(rows: List[dict], out_dir: Path) -> Path:
+def write_report(rows: list[dict], out_dir: Path) -> Path:
     report_path = out_dir / "benchmark_report.json"
     report_path.write_text(json.dumps(rows, indent=2, ensure_ascii=False) + "\n")
     return report_path
 
 
-def markdown_table(rows: List[dict]) -> str:
+def markdown_table(rows: list[dict]) -> str:
     """Render the result rows as a markdown table for the PR/report."""
     lines = [
         "| Engine | Voice | Lang | Wall s | Audio s | x realtime | Budget | Word ts | File |",
@@ -199,7 +198,7 @@ def markdown_table(rows: List[dict]) -> str:
     return "\n".join(lines)
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="TTS engine benchmark: synthesis speed + recorded samples for A/B listening."
     )

@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import uuid
 from pathlib import Path
-from typing import List, Optional
 
 from sqlmodel import Session, select
 
@@ -55,11 +54,11 @@ def import_epub(session: Session, settings: Settings, filename: str, data: bytes
     return book
 
 
-def list_books(session: Session) -> List[Book]:
+def list_books(session: Session) -> list[Book]:
     return list(session.exec(select(Book)).all())
 
 
-def get_book(session: Session, book_id: int) -> Optional[Book]:
+def get_book(session: Session, book_id: int) -> Book | None:
     return session.get(Book, book_id)
 
 

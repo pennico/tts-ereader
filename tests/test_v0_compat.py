@@ -19,8 +19,9 @@ REPO_ROOT = TESTS_DIR.parent
 sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(TESTS_DIR / "fixtures"))
 
-import edge_reader  # noqa: E402
 from make_fixture_epub import make_all_fixtures  # noqa: E402
+
+import edge_reader  # noqa: E402
 from shared import text_preparation, voice_cast  # noqa: E402
 
 SARAMAGO_PREPARED = (

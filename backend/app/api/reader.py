@@ -1,8 +1,6 @@
 """Reader endpoints: chapter list and chapter text (AC-109 area, M1)."""
 from __future__ import annotations
 
-from typing import List
-
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
@@ -26,7 +24,7 @@ class ChapterTextOut(BaseModel):
     text: str
 
 
-def _require_chapters(session: Session, book_id: int) -> List[Chapter]:
+def _require_chapters(session: Session, book_id: int) -> list[Chapter]:
     if library_service.get_book(session, book_id) is None:
         raise HTTPException(status_code=404, detail=f"book {book_id} not found")
     return list(
@@ -36,7 +34,7 @@ def _require_chapters(session: Session, book_id: int) -> List[Chapter]:
     )
 
 
-@router.get("", response_model=List[ChapterOut])
+@router.get("", response_model=list[ChapterOut])
 def list_chapters(book_id: int, session: Session = Depends(get_session)):
     return [
         ChapterOut(index=c.index, title=c.title, char_count=len(c.text))

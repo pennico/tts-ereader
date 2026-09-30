@@ -26,12 +26,11 @@ import argparse
 import asyncio
 import json
 import os
-import re
 import sys
-import time
 from pathlib import Path
 
 import edge_tts
+
 try:
     from mistralai import Mistral
 except ImportError:  # mistralai 2.x: client moved off the top level
@@ -49,6 +48,8 @@ from shared.voice_cast import (
     ROLE_FEMALE_OTHER,
     ROLE_MALE_SHORT,
     ROLE_NARRATOR,
+)
+from shared.voice_cast import (
     assign_voices as _assign_voices,
 )
 
@@ -70,7 +71,7 @@ VOICE_NARRATOR, VOICE_FEMALE_1, VOICE_FEMALE_2, VOICE_SHORT_MALE = (
 
 
 def assign_voices(lines, andrew_short=False):
-    """Two-pass voice assignment. Returns list of (speaker, gender, text, voice, voice_name)."""  # noqa: E501
+    """Two-pass voice assignment. Returns list of (speaker, gender, text, voice, voice_name)."""
     return _assign_voices(lines, cast=CAST_EDGE_IT, andrew_short=andrew_short)
 
 
@@ -237,7 +238,7 @@ def main():
     print(f"\n{'=' * 60}")
     print(f"DONE. {len(files)}/{len(segments)} lines synthesized.")
     print(f"  Audio:  {output_mp3}")
-    print(f"  Player: python3 -m http.server 8000 -> http://localhost:8000/poc_player.html")
+    print("  Player: python3 -m http.server 8000 -> http://localhost:8000/poc_player.html")
     print(f"{'=' * 60}")
 
 

@@ -8,9 +8,9 @@ import json
 from pathlib import Path
 
 import pytest
+from app.engines import factory
 
 import benchmark_tts
-from app.engines import factory
 from tests.mock_engine import MockTTSEngine
 
 

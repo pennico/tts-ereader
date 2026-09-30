@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.engines import factory
 from app.services import tts_service
+
 from tests.mock_engine import MockTTSEngine
 
 
@@ -48,7 +49,6 @@ async def test_cache_key_separates_voices(settings, mock_engine):
 
 @pytest.mark.asyncio
 async def test_fallback_to_mock_when_primary_fails(settings, mock_engine):
-    failing = MockTTSEngine(fail=True)
     failing_name = "mock-fail"
 
     class _Named(MockTTSEngine):

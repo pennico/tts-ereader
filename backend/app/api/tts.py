@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, model_validator
@@ -31,7 +30,7 @@ class VoiceOut(BaseModel):
 
 class SynthesizeIn(BaseModel):
     text: str = Field(min_length=1, max_length=5000)
-    engine: Optional[str] = None
+    engine: str | None = None
     voice: str
     rate: float = Field(default=1.0, ge=0.5, le=2.0)  # AC-303
     pitch: float = Field(default=0.0, ge=-20.0, le=20.0)
@@ -51,18 +50,18 @@ class SynthesisOut(BaseModel):
     format: str
     sample_rate: int
     duration_ms: float
-    word_boundaries: Optional[List[WordBoundaryOut]] = None
+    word_boundaries: list[WordBoundaryOut] | None = None
 
 
 class BatchIn(BaseModel):
-    texts: List[str] = Field(min_length=1, max_length=64)
-    engine: Optional[str] = None
+    texts: list[str] = Field(min_length=1, max_length=64)
+    engine: str | None = None
     voice: str
     rate: float = Field(default=1.0, ge=0.5, le=2.0)
     pitch: float = Field(default=0.0, ge=-20.0, le=20.0)
     # Per-text voice overrides for voice-cast playback (AC-305); parallel to
     # texts, empty entries fall back to `voice`.
-    voices: Optional[List[str]] = None
+    voices: list[str] | None = None
 
     @model_validator(mode="after")
     def _voices_match_texts(self):
@@ -81,11 +80,11 @@ class CastRoleOut(BaseModel):
 class CastDefaultsOut(BaseModel):
     engine: str
     language: str
-    roles: List[CastRoleOut]
+    roles: list[CastRoleOut]
 
 
 class BatchOut(BaseModel):
-    segments: List[SynthesisOut]
+    segments: list[SynthesisOut]
 
 
 def _synthesis_out(text: str, result: dict) -> SynthesisOut:
@@ -104,7 +103,7 @@ def _synthesis_out(text: str, result: dict) -> SynthesisOut:
     )
 
 
-@router.get("/engines", response_model=List[EngineOut])
+@router.get("/engines", response_model=list[EngineOut])
 def list_engines(settings: Settings = Depends(get_settings)):
     """Registered engines with availability (drives the UI selector, AC-301)."""
     out = []
@@ -120,10 +119,10 @@ def list_engines(settings: Settings = Depends(get_settings)):
     return out
 
 
-@router.get("/engines/{engine_name}/voices", response_model=List[VoiceOut])
+@router.get("/engines/{engine_name}/voices", response_model=list[VoiceOut])
 async def list_voices(
     engine_name: str,
-    language: Optional[str] = Query(default=None),
+    language: str | None = Query(default=None),
 ):
     try:
         engine = factory.get_engine(engine_name)
@@ -135,8 +134,8 @@ async def list_voices(
 
 @router.get("/cast-defaults", response_model=CastDefaultsOut)
 def cast_defaults(
-    engine: Optional[str] = None,
-    language: Optional[str] = Query(default=None),
+    engine: str | None = None,
+    language: str | None = Query(default=None),
     settings: Settings = Depends(get_settings),
 ):
     """Default voice cast for an engine + language (drives the cast UI, AC-305)."""

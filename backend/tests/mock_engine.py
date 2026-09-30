@@ -6,12 +6,11 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import List, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.engines.base import SynthesisResult, TTSEngine, WordBoundary  # noqa: E402
-from app.utils.audio import pcm_to_wav  # noqa: E402
+from app.engines.base import SynthesisResult, TTSEngine, WordBoundary
+from app.utils.audio import pcm_to_wav
 
 MS_PER_CHAR = 50.0
 
@@ -21,8 +20,8 @@ class MockTTSEngine(TTSEngine):
 
     def __init__(self, fail: bool = False):
         self.fail = fail
-        self.calls: List[str] = []
-        self.voice_calls: List[tuple] = []
+        self.calls: list[str] = []
+        self.voice_calls: list[tuple] = []
 
     @property
     def name(self) -> str:
@@ -32,7 +31,7 @@ class MockTTSEngine(TTSEngine):
     def display_name(self) -> str:
         return "Mock TTS"
 
-    async def list_voices(self, language: Optional[str] = None) -> List[dict]:
+    async def list_voices(self, language: str | None = None) -> list[dict]:
         voices = [
             {"name": "mock-voice", "display_name": "Mock Voice", "gender": "Neutral", "locale": "it-IT"},
             {"name": "mock-voice-da", "display_name": "Mock Voice DA", "gender": "Neutral", "locale": "da-DK"},

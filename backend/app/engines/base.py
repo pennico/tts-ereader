@@ -6,8 +6,8 @@ interface, so new engines are added as adapters without touching app code.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from typing import AsyncIterator, List, Optional
 
 
 @dataclass
@@ -31,7 +31,7 @@ class SynthesisResult:
     sample_rate: int
     duration_ms: float
     format: str = "wav"
-    word_boundaries: Optional[List[WordBoundary]] = field(default=None)
+    word_boundaries: list[WordBoundary] | None = field(default=None)
 
 
 class EngineError(Exception):
@@ -52,7 +52,7 @@ class TTSEngine(ABC):
         """Human-readable name for the UI."""
 
     @abstractmethod
-    async def list_voices(self, language: Optional[str] = None) -> List[dict]:
+    async def list_voices(self, language: str | None = None) -> list[dict]:
         """Voices as dicts with at least ShortName/name, gender, locale."""
 
     @abstractmethod

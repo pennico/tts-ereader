@@ -38,7 +38,6 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 from xml.sax.saxutils import escape
 
-from poc_reader import chunk_text, extract_epub_chapter, list_epub_chapters
 from edge_reader import (
     LLM_MODEL_DEFAULT,
     RATE_DEFAULT,
@@ -53,6 +52,7 @@ from edge_reader import (
 )
 from epub_mo import clock_value, validate
 from epub_readaloud import slice_text, source_metadata, strip_title_leak
+from poc_reader import chunk_text, extract_epub_chapter, list_epub_chapters
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 

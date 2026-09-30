@@ -7,7 +7,6 @@ callers fall back to serving MP3 directly, which the browser decodes anyway.
 from __future__ import annotations
 
 import struct
-from typing import Optional
 
 
 def pcm_to_wav(pcm: bytes, sample_rate: int, channels: int = 1, sample_width: int = 2) -> bytes:
@@ -34,7 +33,7 @@ def pcm_to_wav(pcm: bytes, sample_rate: int, channels: int = 1, sample_width: in
     return header + pcm
 
 
-def mp3_to_wav(mp3: bytes) -> Optional[bytes]:
+def mp3_to_wav(mp3: bytes) -> bytes | None:
     """Convert MP3 to WAV via pydub/ffmpeg; None if unavailable."""
     try:
         from pydub import AudioSegment

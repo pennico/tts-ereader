@@ -8,9 +8,6 @@ multiplier converted to edge-tts's percentage string.
 """
 from __future__ import annotations
 
-import os
-from typing import List, Optional
-
 from app.engines.base import EngineError, SynthesisResult, TTSEngine, WordBoundary
 from app.utils.audio import mp3_to_wav, wav_duration_ms
 
@@ -48,7 +45,7 @@ class EdgeTTSEngine(TTSEngine):
         except ImportError:
             return False
 
-    async def list_voices(self, language: Optional[str] = None) -> List[dict]:
+    async def list_voices(self, language: str | None = None) -> list[dict]:
         import edge_tts
 
         voices = await edge_tts.list_voices()
@@ -84,7 +81,7 @@ class EdgeTTSEngine(TTSEngine):
                 boundary="WordBoundary",
             )
             audio = bytearray()
-            boundaries: List[WordBoundary] = []
+            boundaries: list[WordBoundary] = []
             async for chunk in communicate.stream():
                 if chunk["type"] == "audio":
                     audio.extend(chunk["data"])
