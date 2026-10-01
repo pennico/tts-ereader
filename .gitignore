@@ -22,3 +22,4 @@ frontend/dist/
 coverage/
 .coverage
 htmlcov/
+dispatcher/feedback_state.json
