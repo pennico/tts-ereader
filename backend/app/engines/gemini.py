@@ -10,16 +10,26 @@ engine in M2 (playback rate is applied client-side).
 """
 from __future__ import annotations
 
+import asyncio
 import base64
+import json
+import logging
 import os
 import re
 
 from app.engines.base import EngineError, SynthesisResult, TTSEngine
 from app.utils.audio import pcm_to_wav
 
+logger = logging.getLogger("tts_ereader.gemini")
+
 API_BASE = "https://generativelanguage.googleapis.com/v1beta"
 DEFAULT_MODEL = "gemini-2.5-flash-preview-tts"
 DEFAULT_STYLE = "Read the following as a warm narrator:"
+
+# Bounded retry for transient malformed responses (issue #15): Gemini
+# occasionally answers 200 with a candidate that has no `content`; re-sending
+# the identical request succeeds. One retry delay = one extra attempt.
+DEFAULT_RETRY_DELAYS = (2.0, 4.0)
 
 # Prebuilt Gemini TTS voices (subset of Google's documented list; the reader
 # UI lists these). Gender per Google's voice descriptions.
@@ -35,6 +45,23 @@ PREBUILT_VOICES = [
 ]
 
 
+def _response_shape(data: dict) -> dict:
+    """Diagnosable summary of a Gemini response: keys and finishReasons,
+    never the base64 audio payload."""
+    candidates = data.get("candidates") or []
+    return {
+        "keys": sorted(data.keys()),
+        "candidate_count": len(candidates),
+        "finish_reasons": [
+            c.get("finishReason") for c in candidates if isinstance(c, dict)
+        ],
+        "candidate_keys": [
+            sorted(c.keys()) for c in candidates if isinstance(c, dict)
+        ],
+        "prompt_feedback": data.get("promptFeedback"),
+    }
+
+
 class GeminiTTSEngine(TTSEngine):
     def __init__(
         self,
@@ -42,12 +69,16 @@ class GeminiTTSEngine(TTSEngine):
         style: str = DEFAULT_STYLE,
         api_key: str | None = None,
         client=None,
+        retry_delays: tuple[float, ...] = DEFAULT_RETRY_DELAYS,
     ):
-        """client: injectable httpx-like async client (tests pass a mock)."""
+        """client: injectable httpx-like async client (tests pass a mock).
+        retry_delays: seconds to wait between attempts on a malformed
+        response; len(retry_delays) + 1 attempts total (tests pass zeros)."""
         self.model = model
         self.style = style
         self._api_key = api_key
         self._client = client
+        self.retry_delays = tuple(retry_delays)
 
     @property
     def name(self) -> str:
@@ -110,13 +141,29 @@ class GeminiTTSEngine(TTSEngine):
                 },
             },
         }
-        data = await self._post(payload)
-        try:
-            inline = data["candidates"][0]["content"]["parts"][0]["inlineData"]
-            mime = inline.get("mimeType", "")
-            pcm = base64.b64decode(inline["data"])
-        except (KeyError, IndexError, TypeError, ValueError) as e:
-            raise EngineError(f"unexpected Gemini response shape: {e}") from e
+        attempts = len(self.retry_delays) + 1
+        for attempt in range(attempts):
+            data = await self._post(payload)
+            try:
+                inline = data["candidates"][0]["content"]["parts"][0]["inlineData"]
+                mime = inline.get("mimeType", "")
+                pcm = base64.b64decode(inline["data"])
+                break
+            except (KeyError, IndexError, TypeError, ValueError) as e:
+                shape = _response_shape(data)
+                logger.warning(
+                    "Gemini malformed response, attempt %d/%d: %s",
+                    attempt + 1,
+                    attempts,
+                    json.dumps(shape, default=str),
+                )
+                if attempt == attempts - 1:
+                    raise EngineError(
+                        f"unexpected Gemini response shape after "
+                        f"{attempts} attempts: {e} "
+                        f"[response: {json.dumps(shape, default=str)}]"
+                    ) from e
+                await asyncio.sleep(self.retry_delays[attempt])
 
         match = re.search(r"rate=(\d+)", mime)
         sample_rate = int(match.group(1)) if match else 24000

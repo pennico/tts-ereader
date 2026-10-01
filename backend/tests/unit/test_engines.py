@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import logging
 import sys
 import types
 
@@ -129,6 +130,18 @@ class _FakeClient:
         return self._response
 
 
+class _FakeClientSeq:
+    """Returns queued responses in order — for retry-path tests (issue #15)."""
+
+    def __init__(self, responses):
+        self._responses = list(responses)
+        self.requests = []
+
+    async def post(self, url, json=None, headers=None):
+        self.requests.append({"url": url, "json": json, "headers": headers})
+        return self._responses.pop(0)
+
+
 def _gemini_payload(pcm: bytes) -> dict:
     return {
         "candidates": [
@@ -177,6 +190,40 @@ async def test_gemini_api_error_raises_engine_error():
     engine = GeminiTTSEngine(api_key="k", client=client)
     with pytest.raises(EngineError, match="429"):
         await engine.synthesize("Ciao", "Kore")
+
+
+@pytest.mark.asyncio
+async def test_gemini_retries_malformed_response_then_succeeds(caplog):
+    # Issue #15: a 200 whose candidate has no `content` is transient —
+    # the identical request succeeds on re-send.
+    pcm = b"\x00\x00" * 2400
+    malformed = {"candidates": [{"finishReason": "STOP"}]}
+    client = _FakeClientSeq(
+        [_FakeResponse(payload=malformed), _FakeResponse(payload=_gemini_payload(pcm))]
+    )
+    engine = GeminiTTSEngine(api_key="k", client=client, retry_delays=(0.0,))
+    with caplog.at_level(logging.WARNING, logger="tts_ereader.gemini"):
+        result = await engine.synthesize("Ciao", "Kore")
+    assert result.audio[:4] == b"RIFF"
+    assert result.sample_rate == 24000
+    assert len(client.requests) == 2  # one re-send, then success
+    # The discarded response shape is logged for diagnosis.
+    assert "STOP" in caplog.text
+    assert "finish_reasons" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_gemini_raises_after_retries_exhausted():
+    malformed = {
+        "candidates": [{"finishReason": "SAFETY"}],
+        "promptFeedback": {"blockReason": "SAFETY"},
+    }
+    client = _FakeClientSeq([_FakeResponse(payload=malformed)] * 3)
+    engine = GeminiTTSEngine(api_key="k", client=client, retry_delays=(0.0, 0.0))
+    with pytest.raises(EngineError, match="SAFETY") as excinfo:
+        await engine.synthesize("Ciao", "Kore")
+    assert "unexpected Gemini response shape" in str(excinfo.value)
+    assert len(client.requests) == 3  # bounded: 1 + len(retry_delays)
 
 
 @pytest.mark.asyncio
