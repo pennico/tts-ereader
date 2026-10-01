@@ -486,6 +486,13 @@ uses a 30 s read timeout, which is too tight for requests beyond roughly
 timed out twice with Charon until retried with a 120 s client (the engine
 accepts an injectable `client`). Batch generation should chunk to short
 lines (the prepared-lines pipeline already does) or raise the timeout.
+Transient malformed responses (seen live 2026-10-01, issue #15): Gemini
+sometimes answers 200 with a candidate that has no `content`; re-sending
+the identical request succeeds. `GeminiTTSEngine.synthesize()` retries up
+to 2 extra times (2 s / 4 s backoff, configurable via `retry_delays`) and
+logs the discarded response shape (finishReason, candidate keys,
+promptFeedback) at WARNING on the `tts_ereader.gemini` logger before each
+retry, so incidents are diagnosable.
 Gemini TTS on an AI Studio key is free-tier: ~15 requests/min and
 ~1,500 requests/day for `gemini-2.5-flash-preview-tts` — a full book at
 line granularity fits comfortably, but full-chapter single requests do
