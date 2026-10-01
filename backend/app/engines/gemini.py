@@ -45,10 +45,15 @@ PREBUILT_VOICES = [
 ]
 
 
-def _response_shape(data: dict) -> dict:
+def _response_shape(data: object) -> dict:
     """Diagnosable summary of a Gemini response: keys and finishReasons,
-    never the base64 audio payload."""
-    candidates = data.get("candidates") or []
+    never the base64 audio payload. Total: must never raise, even when
+    the 200 body is not a dict at all (proxy/CDN garbage, null)."""
+    if not isinstance(data, dict):
+        return {"type": type(data).__name__, "repr": str(data)[:200]}
+    candidates = data.get("candidates")
+    if not isinstance(candidates, list):
+        candidates = []
     return {
         "keys": sorted(data.keys()),
         "candidate_count": len(candidates),

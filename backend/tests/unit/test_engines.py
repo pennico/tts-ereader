@@ -226,6 +226,47 @@ async def test_gemini_raises_after_retries_exhausted():
     assert len(client.requests) == 3  # bounded: 1 + len(retry_delays)
 
 
+class _RawBodyResponse(_FakeResponse):
+    """200 response whose json() body is not a dict (proxy/CDN garbage)."""
+
+    def __init__(self, body):
+        super().__init__()
+        self._body = body
+
+    def json(self):
+        return self._body
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("body", [[], None, "hello", {"candidates": 5}])
+async def test_gemini_nondict_response_flows_through_retry_and_engine_error(
+    caplog, body
+):
+    # Review finding on PR #16: a non-dict 200 body must not escape as a
+    # raw AttributeError/TypeError — it goes through the retry loop and
+    # ends as EngineError, like on main.
+    client = _FakeClientSeq([_RawBodyResponse(body)] * 2)
+    engine = GeminiTTSEngine(api_key="k", client=client, retry_delays=(0.0,))
+    with caplog.at_level(logging.WARNING, logger="tts_ereader.gemini"):
+        with pytest.raises(EngineError, match="unexpected Gemini response shape"):
+            await engine.synthesize("Ciao", "Kore")
+    assert len(client.requests) == 2  # retried once, then EngineError
+    assert "malformed response" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_gemini_nondict_response_then_good_payload_succeeds():
+    # A transient non-dict 200 followed by a good response recovers.
+    pcm = b"\x00\x00" * 2400
+    client = _FakeClientSeq(
+        [_RawBodyResponse([]), _FakeResponse(payload=_gemini_payload(pcm))]
+    )
+    engine = GeminiTTSEngine(api_key="k", client=client, retry_delays=(0.0,))
+    result = await engine.synthesize("Ciao", "Kore")
+    assert result.audio[:4] == b"RIFF"
+    assert len(client.requests) == 2
+
+
 @pytest.mark.asyncio
 async def test_gemini_unavailable_without_key(monkeypatch):
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
