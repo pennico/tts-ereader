@@ -118,8 +118,11 @@ class GeminiTTSEngine(TTSEngine):
             if self._client is None:
                 await client.aclose()
         if resp.status_code != 200:
+            # 800 chars: a 429 body must include the quota metric name
+            # (e.g. GenerateRequestsPerDayPerProjectPerModel) so callers
+            # can distinguish a hard daily quota from a per-minute limit.
             raise EngineError(
-                f"Gemini API error {resp.status_code}: {resp.text[:300]}"
+                f"Gemini API error {resp.status_code}: {resp.text[:800]}"
             )
         return resp.json()
 
