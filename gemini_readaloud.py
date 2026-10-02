@@ -10,6 +10,11 @@ Every line's audio is cleaned (shared/audio_clean.py: the 3.8 end-of-
 response noise burst and start click are trimmed, edges faded) and
 cached under the work dir, so runs are resumable: re-running skips
 everything already synthesized and only spends quota on new lines.
+The prepared text is cached too and reused verbatim on re-runs (issue
+#17): LLM preparation is non-deterministic, so regenerating it would
+rewrite every line, invalidate the whole segment cache and re-spend
+the chapter's Gemini quota on every run — a quota-limited run could
+never finish. --reprepare forces regeneration.
 
 Usage:
   python3 gemini_readaloud.py --epub book.epub --list-chapters
@@ -80,6 +85,37 @@ def cast_voice(speaker, gender, args):
     return args.voice_f if gender == "f" else args.voice_m
 
 
+def prepared_chapter_text(client, args, idx, ch_dir, text):
+    """Prepared text for one chapter, reused across runs (issue #17).
+
+    The segment cache is keyed by line text; regenerating the prepared
+    text with the LLM rewrites every line, so the cache would never hit
+    and each run would re-spend the chapter's full Gemini quota. Reuse
+    the stored prepared text when it was produced from the same source
+    slice (epub, chapter, --slice, --max-chars, --model-llm); the
+    fingerprint lives in prepared_meta.txt next to it.
+    """
+    prepared_file = ch_dir / "prepared_text.txt"
+    meta_file = ch_dir / "prepared_meta.txt"
+    fingerprint = "|".join(str(x) for x in
+                           (args.epub, idx, args.slice, args.max_chars,
+                            args.model_llm))
+    if (not args.reprepare and prepared_file.exists()
+            and meta_file.exists()
+            and meta_file.read_text() == fingerprint):
+        print("  reusing prepared text from previous run", flush=True)
+        return prepared_file.read_text()
+    chunks = chunk_text(text, max_chars=args.max_chars)
+    prepared_parts = []
+    for i, chunk in enumerate(chunks):
+        print(f"  preparing chunk {i + 1}/{len(chunks)} ({len(chunk)} chars)", flush=True)
+        prepared_parts.append(llm_prepare(client, args.model_llm, chunk))
+    prepared = "\n\n".join(prepared_parts)
+    prepared_file.write_text(prepared)
+    meta_file.write_text(fingerprint)
+    return prepared
+
+
 async def synth_line(eng, voice, text, cache_dir, pace, max_retries=5):
     """Synthesize one line, clean it, cache it. Returns the WAV path."""
     key = hashlib.sha1(f"{eng.model}|{voice}|{text}".encode()).hexdigest()[:16]
@@ -91,6 +127,17 @@ async def synth_line(eng, voice, text, cache_dir, pace, max_retries=5):
             res = await eng.synthesize(text, voice=voice)
             break
         except Exception as e:
+            # Daily-quota 429s ("...PerDayPerProjectPerModel..." in the
+            # error body) do not recover within a run: the free tier is a
+            # hard ~10 requests/day per model. Retry-backoff only burns
+            # ten minutes against a wall that resets at midnight Pacific;
+            # abort at once — cached segments make the run resumable.
+            if "429" in str(e) and "PerDay" in str(e):
+                raise RuntimeError(
+                    "Gemini daily quota exhausted (free tier: hard "
+                    "~10 requests/day per model). Lines already "
+                    "synthesized are cached; re-run tomorrow to resume "
+                    "without re-spending quota.") from e
             if "429" in str(e) and attempt < max_retries - 1:
                 wait = 60 * (attempt + 1)
                 print(f"    429 ({voice}), waiting {wait}s...", flush=True)
@@ -149,13 +196,7 @@ async def process_chapter(client, args, idx, work_dir, eng):
     book_title, _creator = source_metadata(args.epub)
     text = strip_title_leak(
         slice_text(extract_epub_chapter(args.epub, idx), args.slice), book_title)
-    chunks = chunk_text(text, max_chars=args.max_chars)
-    prepared_parts = []
-    for i, chunk in enumerate(chunks):
-        print(f"  preparing chunk {i + 1}/{len(chunks)} ({len(chunk)} chars)", flush=True)
-        prepared_parts.append(llm_prepare(client, args.model_llm, chunk))
-    prepared = "\n\n".join(prepared_parts)
-    (ch_dir / "prepared_text.txt").write_text(prepared)
+    prepared = prepared_chapter_text(client, args, idx, ch_dir, text)
 
     lines = split_long_narration(parse_lines(prepared))
     segments = [(s, g, t, cast_voice(s, g, args), cast_voice(s, g, args))
@@ -212,6 +253,9 @@ def main():
                         help="Seconds between Gemini requests (free-tier pacing)")
     parser.add_argument("--gap-ms", type=int, default=250,
                         help="Silence gap between lines in ms")
+    parser.add_argument("--reprepare", action="store_true",
+                        help="Regenerate the prepared text even if cached "
+                             "(invalidates the segment cache)")
     parser.add_argument("--list-chapters", action="store_true")
     args = parser.parse_args()
 
