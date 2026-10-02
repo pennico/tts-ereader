@@ -176,6 +176,18 @@ Raw text -> LLM preparation (clean, repunctuate, speaker tagging) -> Voice cast 
 ### 5.1 Testing Pyramid
 E2E Tests (~10, Playwright, full user journeys) -> Integration Tests (~50, API endpoints, module interactions) -> Unit Tests (~200+, pytest, individual functions).
 
+**Decision (2026-10-02, issue #19): the Playwright E2E layer is dropped
+for v1.** It was never started, and it cannot be written or verified in the
+cloud sandbox (no Node.js, 30 s command limit, no browsers); committing an
+unexecuted browser suite would fake coverage. The journeys it promised are
+covered one level down: FastAPI TestClient integration tests walk
+EPUB import → library → chapter → synthesis (AC-905), and Vitest covers
+the frontend logic (audio engine, sync, pagination, themes, stores).
+Browser-level E2E remains a homelab option (Node.js + `@playwright/test`
++ mock-engine compose profile); see `docs/QA_v1.md` §5. The pyramid for v1
+as delivered is therefore: Integration (pytest/TestClient) -> Unit
+(pytest + Vitest) -> Manual homelab checklist (`docs/QA_v1.md` §1.2).
+
 ### 5.2 Test Categories
 
 **Unit Tests (Backend):** pytest + pytest-asyncio. Scope: EPUB parsing, text preparation, voice cast, TTS engine adapters (with mocks), audio utilities, database models.

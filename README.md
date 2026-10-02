@@ -1,6 +1,6 @@
 # AI-Powered TTS eReader
 
-An AI-powered text-to-speech system that analyzes text for characters, emotion, and context, then synthesizes expressive speech with distinct character voices. Currently at Phase 0 (PoC validated) with EPUB support added.
+An AI-powered text-to-speech system that analyzes text for characters, emotion, and context, then synthesizes expressive speech with distinct character voices. The v0 CLI pipeline is validated and preserved; the v1 reader app (library, reader view, TTS with voice-by-progression, Docker deployment) is implemented.
 
 ## Status
 
@@ -9,7 +9,7 @@ An AI-powered text-to-speech system that analyzes text for characters, emotion, 
 - **Italian (edge-tts hybrid)**: Good quality. `edge_reader.py` pairs Mistral LLM text preparation (cleaning, re-punctuation for speech, speaker tagging) with free Microsoft edge-tts neural voices. See "edge_reader" below.
 - **Danish**: Not supported by Voxtral. Included as a test case only.
 - **EPUB support**: Working. Text is extracted, chunked, analyzed, and synthesized per chapter.
-- **v1 (in progress)**: the reader app is specified and architected — see `PLAN_v1_reader.md`, `docs/SPEC_v1.md`, and `docs/ARCHITECTURE_v1.md`. M1 (library + reader view), M2 (TTS engines + voice-by-progression), M3 (voice tuning + LLM preparation with per-book voice casts), and M4 (Docker deployment + benchmark harness + docs) are implemented; see `ROADMAP.md`.
+- **v1 (implemented)**: the reader app is delivered — see `PLAN_v1_reader.md`, `docs/SPEC_v1.md`, and `docs/ARCHITECTURE_v1.md`. M1 (library + reader view), M2 (TTS engines + voice-by-progression), M3 (voice tuning + LLM preparation with per-book voice casts), and M4 (Docker deployment + benchmark harness + docs) are implemented and merged; see `ROADMAP.md` (fully ticked). Test plan and recorded results: `docs/QA_v1.md`. Remaining open items are live-key benchmarks (AC-603/604) and the homelab manual checklist in `docs/QA_v1.md` §1.2.
 
 ## Architecture
 
