@@ -93,6 +93,13 @@ BLOCKER_HOWTO = ("\n\n---\n\n**How to answer:** comment below, then add the "
                  "just reply to the Telegram notification. The loop "
                  "resumes within ~5 min of your answer.")
 
+# Appended to every dispatcher-filed blocker: the owner is a non-developer
+# reading these on a phone; the answer mechanism must be spelled out.
+BLOCKER_HOWTO = ("\n\n---\n\n**How to answer:** comment below, then add the "
+                 "`answered` label (gear icon → Labels → answered) — or "
+                 "just reply to the Telegram notification. The loop "
+                 "resumes within ~5 min of your answer.")
+
 IMPL_PROMPT = """You are the Implementation agent for this repository (unattended headless run).
 Read AGENTS.md first, then PLAN_v1_reader.md and docs/ARCHITECTURE_v1.md.
 If docs/ARCHITECTURE_v1.md does not exist yet, do not design it yourself:
@@ -103,8 +110,11 @@ Roadmap item for this session: {item}
 
 Follow the hard constraints and decision defaults in AGENTS.md. Work on a
 new branch, commit incrementally, open a draft PR with a Handoff section,
-and tick the matching checkbox in ROADMAP.md as part of your PR. If you are
-blocked (question only the owner can answer, work outside your role), open
+and tick the matching checkbox in ROADMAP.md as part of your PR. If the
+work involves a design choice that changes what the results mean (what
+is counted, excluded, grouped, or named), ask the owner before building:
+file a blocker with the options instead of guessing and building. If you
+are blocked (question only the owner can answer, work outside your role), open
 a GitHub issue labeled `blocker` (`gh issue create --label blocker`) and
 stop cleanly. Write blockers in plain language for a non-developer on a
 phone: "What I was doing / What I need from you / the options if any",
@@ -206,7 +216,11 @@ the problem, and fix it. If a fix is not warranted, comment your findings
 on issue #{number} and close it instead. Follow the hard constraints and
 decision defaults in AGENTS.md. Work on a new branch, commit incrementally,
 open a draft PR with a Handoff section referencing issue #{number}, then
-close issue #{number} with a short comment linking the PR. If you are
+close issue #{number} with a short comment linking the PR. If the task
+involves a design choice that changes what the results mean (what is
+counted, excluded, grouped, or named), ask the owner before building:
+comment the options on issue #{number}, add the `blocker` label, and
+stop cleanly instead of guessing and building. If you are
 blocked (question only the owner can answer), comment on issue #{number}
 in plain language for a non-developer on a phone — "What I was doing /
 What I need from you / the options if any", ending with: "How to answer:
