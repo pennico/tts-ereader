@@ -89,6 +89,9 @@ whole run. When a question is not answered by the docs:
   code and its tests with mocks; skip live calls rather than faking them.
 - The v0 scripts must keep working: if you refactor shared logic, the
   CLIs (`--list-chapters`, `--slice`, etc.) must still run.
+- **Gemini TTS: `gemini-3.8-flash-tts` or newer only.** Never use
+  `gemini-2.5-flash-preview-tts` or older models — the owner retired
+  them (voice quality; Rami/Kore are the reference voices on 3.8).
 
 ## Style
 
