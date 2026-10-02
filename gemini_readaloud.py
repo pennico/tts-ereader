@@ -92,14 +92,17 @@ def prepared_chapter_text(client, args, idx, ch_dir, text):
     text with the LLM rewrites every line, so the cache would never hit
     and each run would re-spend the chapter's full Gemini quota. Reuse
     the stored prepared text when it was produced from the same source
-    slice (epub, chapter, --slice, --max-chars, --model-llm); the
-    fingerprint lives in prepared_meta.txt next to it.
+    slice (epub path resolved, chapter, --slice, --max-chars,
+    --model-llm, plus a sha1 of the sliced source text so a replaced or
+    re-downloaded epub at the same path is detected); the fingerprint
+    lives in prepared_meta.txt next to it.
     """
     prepared_file = ch_dir / "prepared_text.txt"
     meta_file = ch_dir / "prepared_meta.txt"
     fingerprint = "|".join(str(x) for x in
-                           (args.epub, idx, args.slice, args.max_chars,
-                            args.model_llm))
+                           (Path(args.epub).resolve(), idx, args.slice,
+                            args.max_chars, args.model_llm,
+                            hashlib.sha1(text.encode()).hexdigest()))
     if (not args.reprepare and prepared_file.exists()
             and meta_file.exists()
             and meta_file.read_text() == fingerprint):
@@ -255,7 +258,8 @@ def main():
                         help="Silence gap between lines in ms")
     parser.add_argument("--reprepare", action="store_true",
                         help="Regenerate the prepared text even if cached "
-                             "(invalidates the segment cache)")
+                             "(cached segments for old lines are not "
+                             "deleted)")
     parser.add_argument("--list-chapters", action="store_true")
     args = parser.parse_args()
 

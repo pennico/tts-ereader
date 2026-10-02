@@ -25,11 +25,19 @@ sys.path.insert(0, str(REPO_ROOT))
 import gemini_readaloud as gr  # noqa: E402
 
 
-def _args(tmp_path, reprepare=False, slice_=1200):
+def _args(tmp_path, reprepare=False, slice_=1200, epub="book.epub"):
     return types.SimpleNamespace(
-        epub="book.epub", slice=slice_, max_chars=4000,
+        epub=epub, slice=slice_, max_chars=4000,
         model_llm="mistral-large-latest", reprepare=reprepare,
     )
+
+
+def _fingerprint(args, idx, text):
+    """Mirror of gemini_readaloud.prepared_chapter_text's fingerprint."""
+    return "|".join(str(x) for x in
+                    (Path(args.epub).resolve(), idx, args.slice,
+                     args.max_chars, args.model_llm,
+                     hashlib.sha1(text.encode()).hexdigest()))
 
 
 class _RaisingClient:
@@ -97,10 +105,7 @@ def test_prepared_text_reused_when_fingerprint_matches(tmp_path, capsys):
     ch_dir.mkdir()
     (ch_dir / "prepared_text.txt").write_text("cached preparation")
     args = _args(tmp_path)
-    fingerprint = "|".join(str(x) for x in
-                           (args.epub, 3, args.slice, args.max_chars,
-                            args.model_llm))
-    (ch_dir / "prepared_meta.txt").write_text(fingerprint)
+    (ch_dir / "prepared_meta.txt").write_text(_fingerprint(args, 3, "raw"))
 
     # A client that explodes if touched proves no LLM call is made.
     text = gr.prepared_chapter_text(_RaisingClient(), args, 3, ch_dir, "raw")
@@ -118,10 +123,7 @@ def test_prepared_text_regenerated_on_fingerprint_mismatch(tmp_path):
     text = gr.prepared_chapter_text(_FakeLLMClient(), args, 3, ch_dir, "raw")
     assert text == "FAKE [f]: preparato"
     assert (ch_dir / "prepared_text.txt").read_text() == text
-    fingerprint = "|".join(str(x) for x in
-                           (args.epub, 3, args.slice, args.max_chars,
-                            args.model_llm))
-    assert (ch_dir / "prepared_meta.txt").read_text() == fingerprint
+    assert (ch_dir / "prepared_meta.txt").read_text() == _fingerprint(args, 3, "raw")
 
 
 def test_reprepare_flag_forces_regeneration(tmp_path):
@@ -129,14 +131,53 @@ def test_reprepare_flag_forces_regeneration(tmp_path):
     ch_dir.mkdir()
     (ch_dir / "prepared_text.txt").write_text("cached preparation")
     args = _args(tmp_path)
-    fingerprint = "|".join(str(x) for x in
-                           (args.epub, 3, args.slice, args.max_chars,
-                            args.model_llm))
-    (ch_dir / "prepared_meta.txt").write_text(fingerprint)
+    (ch_dir / "prepared_meta.txt").write_text(_fingerprint(args, 3, "raw"))
 
     text = gr.prepared_chapter_text(
         _FakeLLMClient(), _args(tmp_path, reprepare=True), 3, ch_dir, "raw")
     assert text == "FAKE [f]: preparato"
+
+
+def test_prepared_text_reused_across_path_spellings(tmp_path):
+    # Review finding 1: the same epub spelled differently on resume
+    # (resolved path, a symlink, redundant components) must still hit
+    # the cache — a fingerprint miss would re-spend the whole chapter's
+    # Gemini quota (the exact #17 failure mode).
+    ch_dir = tmp_path / "ch003"
+    ch_dir.mkdir()
+    epub = tmp_path / "book.epub"
+    epub.write_bytes(b"epub")
+    args = _args(tmp_path, epub=str(epub))
+    gr.prepared_chapter_text(_FakeLLMClient(), args, 3, ch_dir, "raw")
+
+    link = tmp_path / "link.epub"
+    link.symlink_to(epub)
+    for spelling in (str(epub.resolve()), str(link),
+                     str(tmp_path / "sub" / ".." / "book.epub")):
+        resume_args = _args(tmp_path, epub=spelling)
+        text = gr.prepared_chapter_text(
+            _RaisingClient(), resume_args, 3, ch_dir, "raw")
+        assert text == "FAKE [f]: preparato"
+
+
+def test_prepared_text_regenerated_when_source_content_changes(tmp_path):
+    # Review finding 2: a replaced/re-downloaded epub at the same path
+    # must not silently reuse the old book's prepared text — the
+    # fingerprint binds to the sliced source content.
+    ch_dir = tmp_path / "ch003"
+    ch_dir.mkdir()
+    epub = tmp_path / "book.epub"
+    epub.write_bytes(b"epub v1")
+    args = _args(tmp_path, epub=str(epub))
+    gr.prepared_chapter_text(_FakeLLMClient(), args, 3, ch_dir,
+                             "OLD EDITION: the king died at dawn.")
+
+    text = gr.prepared_chapter_text(
+        _FakeLLMClient(), args, 3, ch_dir,
+        "NEW EDITION, completely different content: the queen sailed east.")
+    assert text == "FAKE [f]: preparato"  # regenerated, not the old text
+    assert (ch_dir / "prepared_meta.txt").read_text() == _fingerprint(
+        args, 3, "NEW EDITION, completely different content: the queen sailed east.")
 
 
 # ── 429 handling ───────────────────────────────────────────────────────────

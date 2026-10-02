@@ -158,8 +158,11 @@ across days (issue #17):
   `prepared_meta.txt` fingerprint) and reused verbatim on re-runs —
   LLM preparation is non-deterministic, and regenerating it would
   rewrite every line, invalidate the whole segment cache, and re-spend
-  the chapter's entire daily quota on every run. `--reprepare` forces
-  regeneration.
+  the chapter's entire daily quota on every run. The fingerprint binds
+  to the resolved epub path plus a hash of the sliced source text, so
+  a differently-spelled path still resumes and a replaced epub at the
+  same path regenerates instead of reusing the old book's text.
+  `--reprepare` forces regeneration.
 - Synthesized segments are cached under the work dir; re-runs skip
   them and only spend quota on new lines.
 - A daily-quota 429 (the `PerDay` quota metric in the error body)
