@@ -180,6 +180,33 @@ def test_prepared_text_regenerated_when_source_content_changes(tmp_path):
         args, 3, "NEW EDITION, completely different content: the queen sailed east.")
 
 
+# ── final assembly ─────────────────────────────────────────────────────────
+
+
+def test_stitch_output_is_a_valid_wav(tmp_path):
+    # Review finding: stitch() used to return raw concatenated frames
+    # with no RIFF header, so process_chapter's audio.wav and to_mp3()
+    # both failed (CouldntDecodeError) — the E2E could never reach
+    # assembly. The stitched output must be a complete WAV.
+    for name in ("a.wav", "b.wav"):
+        (tmp_path / name).write_bytes(_speech_wav(seconds=0.5))
+    wav_bytes, offsets = gr.stitch([tmp_path / "a.wav", tmp_path / "b.wav"], 250)
+    assert wav_bytes[:4] == b"RIFF"
+    with wave.open(io.BytesIO(wav_bytes)) as w:
+        assert w.getnchannels() == 1
+        assert w.getsampwidth() == 2
+        assert w.getframerate() == 24000
+        # two 0.5 s segments, each followed by a 250 ms gap
+        assert w.getnframes() == 24000 * (2 * 0.5 + 2 * 0.25)
+    assert len(offsets) == 2
+    assert offsets[0][1] == pytest.approx(0.5)
+    assert offsets[1][0] == pytest.approx(0.75)
+
+    pydub = pytest.importorskip("pydub")  # to_mp3 needs pydub + ffmpeg
+    assert pydub is not None
+    assert gr.to_mp3(wav_bytes)  # decodes and exports without error
+
+
 # ── 429 handling ───────────────────────────────────────────────────────────
 
 

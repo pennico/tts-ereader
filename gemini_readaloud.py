@@ -165,8 +165,10 @@ async def synth_line(eng, voice, text, cache_dir, pace, max_retries=5):
 def stitch(segments, gap_ms, rate=RATE_DEFAULT, width=2):
     """Concatenate cleaned segments with a silence gap.
 
-    Returns (wav_bytes, offsets) where offsets are (start, end) second
-    pairs per segment, excluding the trailing gap.
+    Returns (wav_bytes, offsets) where wav_bytes is a complete WAV
+    (RIFF header, mono, rate/width — raw frames would not decode as
+    WAV downstream) and offsets are (start, end) second pairs per
+    segment, excluding the trailing gap.
     """
     gap = b"\x00" * (rate * width * gap_ms // 1000)
     frames, offsets, t = [], [], 0.0
@@ -178,7 +180,13 @@ def stitch(segments, gap_ms, rate=RATE_DEFAULT, width=2):
         frames.append(data)
         frames.append(gap)
         t += dur + gap_ms / 1000.0
-    return b"".join(frames), offsets
+    out = io.BytesIO()
+    with wave.open(out, "w") as w:
+        w.setnchannels(1)
+        w.setsampwidth(width)
+        w.setframerate(rate)
+        w.writeframes(b"".join(frames))
+    return out.getvalue(), offsets
 
 
 def to_mp3(wav_bytes):
