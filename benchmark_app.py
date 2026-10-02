@@ -55,20 +55,27 @@ TAP_TEXT = "Ciao mondo, che bella giornata per leggere un libro insieme."
 @contextmanager
 def app_client(data_dir: Path):
     """App + TestClient wired to an isolated data dir, mock engine registered."""
-    os.environ["TTSEREADER_DATA_DIR"] = str(data_dir)
-    settings = Settings(data_dir=data_dir)
-    settings.ensure_dirs()
-    reset_engine_for_tests()
-    init_db(settings)
+    had_data_dir = "TTSEREADER_DATA_DIR" in os.environ
+    saved_data_dir = os.environ.get("TTSEREADER_DATA_DIR")
     saved_registry = dict(factory._REGISTRY)
-    factory.register(MockTTSEngine())
-    app = create_app()
-    with TestClient(app) as client:
-        yield client
-    factory._REGISTRY.clear()
-    factory._REGISTRY.update(saved_registry)
-    reset_engine_for_tests()
-    del os.environ["TTSEREADER_DATA_DIR"]
+    os.environ["TTSEREADER_DATA_DIR"] = str(data_dir)
+    try:
+        settings = Settings(data_dir=data_dir)
+        settings.ensure_dirs()
+        reset_engine_for_tests()
+        init_db(settings)
+        factory.register(MockTTSEngine())
+        app = create_app()
+        with TestClient(app) as client:
+            yield client
+    finally:
+        factory._REGISTRY.clear()
+        factory._REGISTRY.update(saved_registry)
+        reset_engine_for_tests()
+        if had_data_dir:
+            os.environ["TTSEREADER_DATA_DIR"] = saved_data_dir
+        else:
+            del os.environ["TTSEREADER_DATA_DIR"]
 
 
 def _timed_ms(fn) -> float:
@@ -149,10 +156,17 @@ def print_table(rows: list[dict]) -> None:
         )
 
 
+def _positive_int(value: str) -> int:
+    number = int(value)
+    if number < 1:
+        raise argparse.ArgumentTypeError(f"{value!r} must be >= 1")
+    return number
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--books", type=int, default=100, help="library size for AC-601 (default 100)")
-    parser.add_argument("--repeats", type=int, default=5, help="timed repeats per path (default 5)")
+    parser.add_argument("--books", type=_positive_int, default=100, help="library size for AC-601 (default 100)")
+    parser.add_argument("--repeats", type=_positive_int, default=5, help="timed repeats per path (default 5)")
     args = parser.parse_args()
 
     with tempfile.TemporaryDirectory(prefix="benchmark_app_") as tmp:

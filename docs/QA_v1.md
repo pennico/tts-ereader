@@ -23,7 +23,7 @@ homelab.
 | Layer | Tool | Location | Runs in | Status |
 |---|---|---|---|---|
 | v0 pipeline regression | pytest | `tests/` (41 tests) | CI + sandbox | Passing (2026-10-02, 41/41) |
-| Backend unit + integration | pytest + FastAPI TestClient | `backend/tests/` (108 tests) | CI + sandbox | Passing (2026-10-02, 108/108) |
+| Backend unit + integration | pytest + FastAPI TestClient | `backend/tests/` (110 tests) | CI + sandbox | Passing (2026-10-02, 110/110) |
 | Frontend unit | Vitest | `frontend/src/**/*.test.ts` (7 files, 55 cases) | Homelab only (`cd frontend && npm test && npm run check`) | Written; **never executed** (no Node.js in sandbox) |
 | E2E (Playwright) | — | — | — | **Dropped** — decision recorded in ARCHITECTURE_v1 §5.1 and §5 below |
 
@@ -139,7 +139,7 @@ Frontend coverage: unmeasured (no Node.js in the sandbox).
 
 ### 3.4 Suite health
 
-- `pytest tests backend/tests -q`: **149 passed** (41 v0 + 108 backend),
+- `pytest tests backend/tests -q`: **151 passed** (41 v0 + 110 backend),
   also green in CI on main.
 - `ruff check .`: clean.
 - Vitest suite (55 cases): written, **never executed** — run on the
