@@ -145,6 +145,37 @@ Same options as edge_reader (`--rate`, `--model`, `--max-chars`,
 title that leaks from the source `<title>` tag so chapters don't start with
 the title being read aloud.
 
+## gemini_readaloud: Gemini TTS read-along (quota-resumable)
+
+`gemini_readaloud.py` is the same output contract as `epub_readaloud.py`,
+but synthesis goes through the Gemini TTS engine one prepared line at a
+time (the "box" method), with per-line audio cleaning. It is built for
+the Gemini free tier, which is a **hard ~10 requests/day per model**
+(observed 2026-09-30; resets midnight Pacific), so runs are resumable
+across days (issue #17):
+
+- The prepared text is cached per chapter (`prepared_text.txt` +
+  `prepared_meta.txt` fingerprint) and reused verbatim on re-runs —
+  LLM preparation is non-deterministic, and regenerating it would
+  rewrite every line, invalidate the whole segment cache, and re-spend
+  the chapter's entire daily quota on every run. `--reprepare` forces
+  regeneration.
+- Synthesized segments are cached under the work dir; re-runs skip
+  them and only spend quota on new lines.
+- A daily-quota 429 (the `PerDay` quota metric in the error body)
+  aborts at once with a resumable error instead of retry-backoff: the
+  quota resets at midnight Pacific, so waiting within a run cannot
+  help. Per-minute 429s keep the 60–240 s backoff retry.
+
+```bash
+python3 gemini_readaloud.py --epub "book.epub" --chapter 3 --slice 1200 \
+    --single Kore --pace 20 --output out/slice.epub
+```
+
+A slice larger than ~10 prepared lines takes several days on the free
+tier (each daily run synthesizes what the quota allows, then resumes
+the next day); paid tier removes the limit.
+
 ### Where read-along actually works
 
 | Reader | Media Overlays (reflowable) | Media Overlays (fixed layout) |
@@ -493,10 +524,11 @@ to 2 extra times (2 s / 4 s backoff, configurable via `retry_delays`) and
 logs the discarded response shape (finishReason, candidate keys,
 promptFeedback) at WARNING on the `tts_ereader.gemini` logger before each
 retry, so incidents are diagnosable.
-Gemini TTS on an AI Studio key is free-tier: ~15 requests/min and
-~1,500 requests/day for `gemini-2.5-flash-preview-tts` — a full book at
-line granularity fits comfortably, but full-chapter single requests do
-not (and would hit the timeout above first).
+Gemini TTS on an AI Studio key is free-tier: a **hard ~10 requests/day
+per model** (observed 2026-09-30; resets midnight Pacific) plus a small
+per-minute bucket on 2.5 — a full book at line granularity is paid-tier
+only; use `gemini_readaloud.py`'s cache-resume across days for free-tier
+slices (see above).
 
 ```bash
 pip3 install -r requirements.txt -r requirements-dev.txt
