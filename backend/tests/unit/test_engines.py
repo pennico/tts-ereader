@@ -193,6 +193,25 @@ async def test_gemini_api_error_raises_engine_error():
 
 
 @pytest.mark.asyncio
+async def test_gemini_429_body_keeps_quota_metric_name():
+    # Issue #17: callers (gemini_readaloud.synth_line) tell a hard daily
+    # quota from a per-minute limit by the quota metric name in the 429
+    # body, so the error must not truncate it away.
+    body = (
+        '{"error": {"code": 429, "message": "You exceeded your current '
+        'quota, please check your plan and billing details. \\n* Quota '
+        "exceeded for quota metric 'GenerateRequestsPerDayPerProjectPerModel' "
+        "and limit 'GenerateRequestsPerDayPerProjectPerModel-freetier' of "
+        "service 'generativelanguage.googleapis.com' for consumer "
+        "'project_number:1234567890'.\"}}"
+    )
+    client = _FakeClient(_FakeResponse(status_code=429, text=body))
+    engine = GeminiTTSEngine(api_key="k", client=client)
+    with pytest.raises(EngineError, match="PerDayPerProjectPerModel"):
+        await engine.synthesize("Ciao", "Kore")
+
+
+@pytest.mark.asyncio
 async def test_gemini_retries_malformed_response_then_succeeds(caplog):
     # Issue #15: a 200 whose candidate has no `content` is transient —
     # the identical request succeeds on re-send.
