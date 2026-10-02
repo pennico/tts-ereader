@@ -23,7 +23,7 @@ from app.utils.audio import pcm_to_wav
 logger = logging.getLogger("tts_ereader.gemini")
 
 API_BASE = "https://generativelanguage.googleapis.com/v1beta"
-DEFAULT_MODEL = "gemini-2.5-flash-preview-tts"
+DEFAULT_MODEL = "gemini-3.8-flash-tts"
 DEFAULT_STYLE = "Read the following as a warm narrator:"
 
 # Bounded retry for transient malformed responses (issue #15): Gemini

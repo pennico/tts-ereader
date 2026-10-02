@@ -77,7 +77,7 @@ def _speech_wav(seconds=1.0, rate=24000) -> bytes:
 
 class _FakeEngine:
     def __init__(self, responses):
-        self.model = "gemini-2.5-flash-preview-tts"
+        self.model = "gemini-3.8-flash-tts"
         self._responses = list(responses)
         self.calls = 0
 
@@ -267,7 +267,7 @@ async def test_per_minute_429_keeps_backoff_retry(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_cached_segment_skips_engine(tmp_path):
     key = hashlib.sha1(
-        b"gemini-2.5-flash-preview-tts|Kore|test line").hexdigest()[:16]
+        b"gemini-3.8-flash-tts|Kore|test line").hexdigest()[:16]
     seg = tmp_path / f"Kore-{key}.wav"
     seg.write_bytes(b"\0" * 2000)
     eng = _FakeEngine([_quota_error()])
