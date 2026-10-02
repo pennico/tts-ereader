@@ -207,6 +207,30 @@ def test_stitch_output_is_a_valid_wav(tmp_path):
     assert gr.to_mp3(wav_bytes)  # decodes and exports without error
 
 
+def test_stitch_uses_segment_rate_not_hardcoded(tmp_path):
+    # Review finding: synth_line caches segments with the response's real
+    # rate/width (the engine parses rate=(\d+) from the mimeType), but
+    # stitch() wrote a hardcoded 24000/2 header and computed offsets with
+    # the same values — a non-24kHz segment would play at the wrong speed
+    # and desync every SMIL offset. The header and offsets must come from
+    # the segments themselves.
+    (tmp_path / "a48k.wav").write_bytes(_speech_wav(seconds=0.5, rate=48000))
+    wav_bytes, offsets = gr.stitch([tmp_path / "a48k.wav"], 250)
+    with wave.open(io.BytesIO(wav_bytes)) as w:
+        assert w.getframerate() == 48000
+        assert w.getsampwidth() == 2
+    assert offsets == [(0.0, pytest.approx(0.5))]  # true duration, not 1.0
+
+
+def test_stitch_refuses_mixed_format_segments(tmp_path):
+    # Mixed-rate PCM cannot be concatenated under one header: a loud
+    # failure beats silent speed/pitch and sync corruption.
+    (tmp_path / "a24k.wav").write_bytes(_speech_wav(seconds=0.5))
+    (tmp_path / "a48k.wav").write_bytes(_speech_wav(seconds=0.5, rate=48000))
+    with pytest.raises(ValueError, match="mixed-format"):
+        gr.stitch([tmp_path / "a24k.wav", tmp_path / "a48k.wav"], 250)
+
+
 # ── 429 handling ───────────────────────────────────────────────────────────
 
 

@@ -162,18 +162,32 @@ async def synth_line(eng, voice, text, cache_dir, pace, max_retries=5):
     return seg
 
 
-def stitch(segments, gap_ms, rate=RATE_DEFAULT, width=2):
+def stitch(segments, gap_ms):
     """Concatenate cleaned segments with a silence gap.
 
     Returns (wav_bytes, offsets) where wav_bytes is a complete WAV
-    (RIFF header, mono, rate/width — raw frames would not decode as
-    WAV downstream) and offsets are (start, end) second pairs per
-    segment, excluding the trailing gap.
+    (RIFF header, mono, rate/width taken from the segments themselves —
+    the engine can return rates other than 24 kHz, and a hardcoded
+    header would play at the wrong speed and desync every SMIL offset)
+    and offsets are (start, end) second pairs per segment, excluding
+    the trailing gap.
     """
-    gap = b"\x00" * (rate * width * gap_ms // 1000)
+    rate, width, gap = RATE_DEFAULT, 2, b""
     frames, offsets, t = [], [], 0.0
-    for seg in segments:
+    for i, seg in enumerate(segments):
         with wave.open(str(seg)) as w:
+            seg_rate, seg_width = w.getframerate(), w.getsampwidth()
+            if i == 0:
+                rate, width = seg_rate, seg_width
+                gap = b"\x00" * (rate * width * gap_ms // 1000)
+            elif (seg_rate, seg_width) != (rate, width):
+                # Concatenating mixed-format PCM cannot produce a valid
+                # single-header WAV; fail loudly instead of corrupting
+                # the audio and every SMIL offset.
+                raise ValueError(
+                    f"segment {seg} is {seg_rate} Hz / {seg_width}-byte, "
+                    f"expected {rate} Hz / {width}-byte: refusing to "
+                    "stitch mixed-format segments")
             data = w.readframes(w.getnframes())
         dur = len(data) / (rate * width)
         offsets.append((t, t + dur))
