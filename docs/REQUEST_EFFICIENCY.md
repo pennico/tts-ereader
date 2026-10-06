@@ -7,8 +7,19 @@ per-line "box method" makes one short request per prepared line, so a
 single chapter (ch1 of the Saramago test book = 117 prepared lines)
 spends more than a day's whole bucket. This note records what was
 considered, what was measured, and the recommended configuration.
-Measured live numbers and listenable samples:
-`out/voice_tests/SUMMARY-2026-10-06-request-efficiency.md`.
+Measured numbers (requests, tokens, wall time, per-boundary alignment
+error) are in `out/voice_tests/reqeff-measurements.json` (local run
+artifacts, gitignored; listenable sample WAVs alongside). The
+`gemini-2.5-flash-preview-tts` entries in that file predate the
+model's retirement and are not used below; all numbers cited here are
+from `gemini-3.8-flash-lite-tts`.
+
+**Owner decision (issue #30 answer, 2026-10-06):** the scheduled ch1-3
+run uses `gemini-3.8-flash-lite-tts` — a different model with a
+different request quota than `gemini-3.8-flash-tts` — and tomorrow's
+run is a new, lower-demand request on the gemini 3.8 family. No
+re-measurement on `gemini-3.8-flash-tts` is needed; the flash-lite
+numbers below are the basis of the recommendation.
 
 ## Approaches considered
 
@@ -57,8 +68,9 @@ but the model sees a longer prompt, the voice assignment for dialogue
 depends on the model honoring the labels, and a single bad generation
 affects up to N lines (mitigated by the per-batch fallbacks). Alignment
 of the SMIL offsets is approximate (silence-gap based) rather than
-exact: measured per-boundary error is in the SUMMARY; per-line requests
-have exact offsets by construction.
+exact: measured per-boundary error is in
+`out/voice_tests/reqeff-measurements.json` (the `alignment` key);
+per-line requests have exact offsets by construction.
 
 ## Recommendation
 
@@ -67,13 +79,27 @@ have exact offsets by construction.
 - Measured prepared lines: ch1 = 117, ch2 = 133, ch3 = 263 (513 total).
 - Worst case 53 requests — half the 100/day budget; with ch1 already
   ~fully cached per-line from earlier runs, ~43.
-- batch10 takes measured ~27-37 s wall per request (2.5-preview-tts;
-  3.8 similar), inside the engine's 120 s read timeout; batch20
-  measured ~60 s — closer to the timeout than comfortable for a
-  headless scheduled run.
-- Alignment error at N=10 measured in the SUMMARY; N=20 doubles the
-  drift exposure for a 2x request saving that the budget does not
-  need.
+- Wall time on `gemini-3.8-flash-lite-tts` (measured 2026-10-06,
+  20-line ch1 slice): batch10 = 2 requests, 44.0 s wall; batch20 =
+  1 request, 26.6 s wall — both well inside the engine's 120 s read
+  timeout. (An earlier draft of this note argued batch20 was "closer
+  to the read timeout" from retired 2.5-preview-tts timings; that
+  model is retired and the claim is withdrawn — on the 3.8 numbers
+  it does not hold.)
+- Alignment on the same slice: batch10 = 1 of 2 takes unalignable
+  (falls back to per-line), boundary drift up to 9.7 s on the other;
+  batch20 = 0 fallbacks, drift up to 7.7 s; batch5 = 1 of 4
+  fallbacks, drift up to 5.8 s. One 20-line slice is too small to
+  rank batch sizes on alignment; the fallback keeps highlighting
+  correct, but an accepted batch can still drift a few seconds
+  against per-line ground truth.
+
+N=10 stays the recommendation: 53 requests already fit the day's
+budget with headroom for fallbacks, and a smaller batch bounds how
+many lines one bad take affects. On the measured 3.8-flash-lite
+slice batch20 was no slower and did not fall back, so N=20 is a
+reasonable choice for big books on a tight budget — the earlier
+timeout-based argument against it is withdrawn.
 
 If a future run needs to fit a bigger book into the same budget, raise N
 (the flag is the only knob); if alignment fallbacks ever dominate,

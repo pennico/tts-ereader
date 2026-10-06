@@ -199,9 +199,10 @@ runs are resumable across days (issue #17):
   alike — and prints the day's total for the model. Wrappers read the
   ledger (`shared/quota_ledger.py`) to report spend in notifications.
   Measured comparison of per-line vs batched synthesis (requests,
-  tokens, alignment error, samples):
-  `out/voice_tests/SUMMARY-2026-10-06-request-efficiency.md` and
-  `docs/REQUEST_EFFICIENCY.md`.
+  tokens, wall time, alignment error):
+  `docs/REQUEST_EFFICIENCY.md` — raw numbers in
+  `out/voice_tests/reqeff-measurements.json` (local run artifacts,
+  not committed).
 
 ```bash
 python3 gemini_readaloud.py --epub "book.epub" --chapter 3 --slice 1200 \
