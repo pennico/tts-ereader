@@ -144,6 +144,33 @@ def _is_content_filter(exc):
     return '"finish_reasons": ["OTHER"]' in str(exc)
 
 
+def _is_daily_quota(exc):
+    """True for a hard daily-quota 429 (issue #23).
+
+    The quota metric name reached us in two formats: the older CamelCase
+    GenerateRequestsPerDayPerProjectPerModel and the current snake_case
+    generate_requests_per_model_per_day. Matching the literal "PerDay"
+    missed the new format, so a daily-quota 429 fell into the per-minute
+    backoff branch and surfaced as exit 1 instead of the resumable
+    EXIT_QUOTA. Normalize case and separators before matching so both
+    formats (and any future spelling of "...per day...") abort at once.
+    """
+    s = str(exc).lower().replace("_", "").replace(" ", "")
+    return "429" in s and "perday" in s
+
+
+def _quota_abort_message(exc):
+    """One-line resumable-abort message, with the API's own retry hint."""
+    m = re.search(r"retry in ([\dhms.]+)", str(exc))
+    when = (f" The API says: retry in {m.group(1).rstrip('.')}."
+            if m else "")
+    return ("Gemini daily quota exhausted (hard per-day request limit; "
+            "it does not recover within a run)."
+            + when
+            + " Lines already synthesized are cached; re-run after the "
+            "quota resets to resume without re-spending quota.")
+
+
 def _sentence_pieces(text):
     """Split a line into sentence pieces for the filter fallback."""
     return [s for s in re.split(r"(?<=[.!?…])\s+", text.strip()) if s]
@@ -166,17 +193,14 @@ async def synth_line(eng, voice, text, cache_dir, pace, max_retries=5):
                 res = await eng.synthesize(text, voice=voice)
                 break
             except Exception as e:
-                # Daily-quota 429s ("...PerDayPerProjectPerModel..." in the
-                # error body) do not recover within a run: the free tier is a
-                # hard ~10 requests/day per model. Retry-backoff only burns
-                # ten minutes against a wall that resets at midnight Pacific;
-                # abort at once — cached segments make the run resumable.
-                if "429" in str(e) and "PerDay" in str(e):
-                    raise QuotaExhausted(
-                        "Gemini daily quota exhausted (free tier: hard "
-                        "~10 requests/day per model). Lines already "
-                        "synthesized are cached; re-run tomorrow to resume "
-                        "without re-spending quota.") from e
+                # Daily-quota 429s do not recover within a run: the
+                # per-day limit is a hard wall (observed limit: 100
+                # requests/day per model) that resets hours later.
+                # Retry-backoff only burns ten minutes against it;
+                # abort at once — cached segments make the run
+                # resumable.
+                if _is_daily_quota(e):
+                    raise QuotaExhausted(_quota_abort_message(e)) from e
                 if "429" in str(e) and attempt < max_retries - 1:
                     wait = 60 * (attempt + 1)
                     print(f"    429 ({voice}), waiting {wait}s...", flush=True)
@@ -313,7 +337,7 @@ def run_generation(run):
     except QuotaExhausted as e:
         print(f"\nQUOTA EXHAUSTED (resumable, exit code {EXIT_QUOTA}): {e}",
               flush=True)
-        print("Re-run after the quota reset (midnight Pacific) to resume; "
+        print("Re-run after the quota reset to resume; "
               "cached lines are not re-spent.", flush=True)
         sys.exit(EXIT_QUOTA)
 
