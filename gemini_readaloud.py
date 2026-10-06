@@ -35,6 +35,7 @@ import asyncio
 import hashlib
 import io
 import os
+import re
 import sys
 import time
 import wave
@@ -45,6 +46,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 sys.path.insert(0, str(SCRIPT_DIR / "backend"))
 
+from app.engines.base import EngineError  # noqa: E402
 from app.engines.gemini import GeminiTTSEngine  # noqa: E402
 
 from epub_mo import clock_value, validate  # noqa: E402
@@ -119,34 +121,70 @@ def prepared_chapter_text(client, args, idx, ch_dir, text):
     return prepared
 
 
+SENTENCE_GAP_MS = 120  # pause between sentences of a split line
+
+
+def _is_content_filter(exc):
+    """True when Gemini's copyright recitation filter blocked the passage.
+
+    The response carries finishReason OTHER and no content (the
+    finishMessage names copyrighted material). The block is
+    deterministic per passage, so retrying the same text never helps;
+    only shorter pieces get through.
+    """
+    return '"finish_reasons": ["OTHER"]' in str(exc)
+
+
+def _sentence_pieces(text):
+    """Split a line into sentence pieces for the filter fallback."""
+    return [s for s in re.split(r"(?<=[.!?…])\s+", text.strip()) if s]
+
+
 async def synth_line(eng, voice, text, cache_dir, pace, max_retries=5):
-    """Synthesize one line, clean it, cache it. Returns the WAV path."""
+    """Synthesize one line, clean it, cache it. Returns the WAV path.
+
+    Lines blocked by the recitation filter are split into sentences,
+    synthesized piece by piece, and stitched back into one cached
+    segment (the pieces are cached too, so re-runs resume).
+    """
     key = hashlib.sha1(f"{eng.model}|{voice}|{text}".encode()).hexdigest()[:16]
     seg = cache_dir / f"{voice}-{key}.wav"
     if seg.exists() and seg.stat().st_size > 1000:
         return seg
-    for attempt in range(max_retries):
-        try:
-            res = await eng.synthesize(text, voice=voice)
-            break
-        except Exception as e:
-            # Daily-quota 429s ("...PerDayPerProjectPerModel..." in the
-            # error body) do not recover within a run: the free tier is a
-            # hard ~10 requests/day per model. Retry-backoff only burns
-            # ten minutes against a wall that resets at midnight Pacific;
-            # abort at once — cached segments make the run resumable.
-            if "429" in str(e) and "PerDay" in str(e):
-                raise RuntimeError(
-                    "Gemini daily quota exhausted (free tier: hard "
-                    "~10 requests/day per model). Lines already "
-                    "synthesized are cached; re-run tomorrow to resume "
-                    "without re-spending quota.") from e
-            if "429" in str(e) and attempt < max_retries - 1:
-                wait = 60 * (attempt + 1)
-                print(f"    429 ({voice}), waiting {wait}s...", flush=True)
-                await asyncio.sleep(wait)
-            else:
-                raise
+    try:
+        for attempt in range(max_retries):
+            try:
+                res = await eng.synthesize(text, voice=voice)
+                break
+            except Exception as e:
+                # Daily-quota 429s ("...PerDayPerProjectPerModel..." in the
+                # error body) do not recover within a run: the free tier is a
+                # hard ~10 requests/day per model. Retry-backoff only burns
+                # ten minutes against a wall that resets at midnight Pacific;
+                # abort at once — cached segments make the run resumable.
+                if "429" in str(e) and "PerDay" in str(e):
+                    raise RuntimeError(
+                        "Gemini daily quota exhausted (free tier: hard "
+                        "~10 requests/day per model). Lines already "
+                        "synthesized are cached; re-run tomorrow to resume "
+                        "without re-spending quota.") from e
+                if "429" in str(e) and attempt < max_retries - 1:
+                    wait = 60 * (attempt + 1)
+                    print(f"    429 ({voice}), waiting {wait}s...", flush=True)
+                    await asyncio.sleep(wait)
+                else:
+                    raise
+    except EngineError as e:
+        parts = _sentence_pieces(text)
+        if not _is_content_filter(e) or len(parts) < 2:
+            raise
+        print(f"    recitation filter on line, synthesizing "
+              f"{len(parts)} sentences separately", flush=True)
+        wavs = [await synth_line(eng, voice, p, cache_dir, pace, max_retries)
+                for p in parts]
+        wav_bytes, _ = stitch(wavs, SENTENCE_GAP_MS)
+        seg.write_bytes(wav_bytes)
+        return seg
     with wave.open(io.BytesIO(res.audio)) as w:
         rate, width = w.getframerate(), w.getsampwidth()
         pcm = w.readframes(w.getnframes())
