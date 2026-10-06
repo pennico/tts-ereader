@@ -150,9 +150,10 @@ the title being read aloud.
 `gemini_readaloud.py` is the same output contract as `epub_readaloud.py`,
 but synthesis goes through the Gemini TTS engine one prepared line at a
 time (the "box" method), with per-line audio cleaning. It is built for
-the Gemini free tier, which is a **hard ~10 requests/day per model**
-(observed 2026-09-30; resets midnight Pacific), so runs are resumable
-across days (issue #17):
+the Gemini per-day request quota (observed limit: **100 requests/day
+per model**, 2026-10-06, issue #23; earlier observed ~10/day — the
+tier's limit has changed before, so treat the number as volatile), so
+runs are resumable across days (issue #17):
 
 - The prepared text is cached per chapter (`prepared_text.txt` +
   `prepared_meta.txt` fingerprint) and reused verbatim on re-runs —
@@ -165,22 +166,27 @@ across days (issue #17):
   `--reprepare` forces regeneration.
 - Synthesized segments are cached under the work dir; re-runs skip
   them and only spend quota on new lines.
-- A daily-quota 429 (the `PerDay` quota metric in the error body)
-  aborts at once with a resumable error instead of retry-backoff: the
-  quota resets at midnight Pacific, so waiting within a run cannot
-  help. Per-minute 429s keep the 60–240 s backoff retry. The abort
-  prints a one-line `QUOTA EXHAUSTED (resumable)` message and exits
-  with code **75** (`EX_TEMPFAIL`), so wrapper jobs can tell "re-run
-  tomorrow to resume" apart from a real failure (issue #21).
+- A daily-quota 429 aborts at once with a resumable error instead of
+  retry-backoff: the per-day limit does not reset within a run, so
+  waiting cannot help. Detection matches the quota metric in the error
+  body in both spellings the API has used — CamelCase
+  `GenerateRequestsPerDayPerProjectPerModel` and the current
+  snake_case `generate_requests_per_model_per_day` (issue #23; the
+  literal `PerDay` match missed the new format and the abort surfaced
+  as exit 1). Per-minute 429s keep the 60–240 s backoff retry. The
+  abort prints a one-line `QUOTA EXHAUSTED (resumable)` message with
+  the API's own "retry in ..." hint and exits with code **75**
+  (`EX_TEMPFAIL`), so wrapper jobs can tell "re-run after the reset to
+  resume" apart from a real failure (issue #21).
 
 ```bash
 python3 gemini_readaloud.py --epub "book.epub" --chapter 3 --slice 1200 \
     --single Kore --pace 20 --output out/slice.epub
 ```
 
-A slice larger than ~10 prepared lines takes several days on the free
-tier (each daily run synthesizes what the quota allows, then resumes
-the next day); paid tier removes the limit.
+A slice larger than the daily quota allows (observed 100 requests/day)
+takes several days (each daily run synthesizes what the quota allows,
+then resumes the next day); paid tier removes the limit.
 
 ### Where read-along actually works
 
@@ -530,11 +536,12 @@ to 2 extra times (2 s / 4 s backoff, configurable via `retry_delays`) and
 logs the discarded response shape (finishReason, candidate keys,
 promptFeedback) at WARNING on the `tts_ereader.gemini` logger before each
 retry, so incidents are diagnosable.
-Gemini TTS on an AI Studio key is free-tier: a **hard ~10 requests/day
-per model** (observed 2026-09-30; resets midnight Pacific) plus a small
-per-minute bucket on 2.5 — a full book at line granularity is paid-tier
-only; use `gemini_readaloud.py`'s cache-resume across days for free-tier
-slices (see above).
+Gemini TTS on an AI Studio key has a hard per-day request quota
+(observed limit: 100 requests/day per model, 2026-10-06; earlier
+observed ~10/day — the number has changed before) plus a small
+per-minute bucket — a full book at line granularity needs the
+cache-resume across days; use `gemini_readaloud.py`'s cache-resume
+for quota-limited slices (see above).
 
 ```bash
 pip3 install -r requirements.txt -r requirements-dev.txt
