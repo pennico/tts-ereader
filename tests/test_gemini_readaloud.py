@@ -240,9 +240,38 @@ async def test_daily_quota_429_aborts_without_retry(tmp_path):
     # re-spending, a clear resumable error instead of a traceback after
     # ten minutes of waiting (issue #17).
     eng = _FakeEngine([_quota_error(), _quota_error()])
-    with pytest.raises(RuntimeError, match="daily quota"):
+    with pytest.raises(gr.QuotaExhausted, match="daily quota"):
         await gr.synth_line(eng, "Kore", "test line", tmp_path, pace=0)
     assert eng.calls == 1  # aborted at once, no retries
+
+
+def test_quota_abort_exits_with_distinct_code(capsys):
+    # The quota abort is resumable, not a crash: it must surface as a
+    # one-line message and exit code 75 so wrapper jobs (homelab
+    # tts-ch1-3-run.sh) resume the next day instead of reporting a
+    # failure (issue #21).
+    async def run():
+        raise gr.QuotaExhausted(
+            "Gemini daily quota exhausted (free tier: hard ~10 "
+            "requests/day per model).")
+
+    with pytest.raises(SystemExit) as ei:
+        gr.run_generation(run)
+    assert ei.value.code == gr.EXIT_QUOTA == 75
+    out = capsys.readouterr().out
+    assert "QUOTA EXHAUSTED (resumable, exit code 75)" in out
+    assert "re-run" in out.lower()
+    assert "Traceback" not in out
+
+
+def test_run_generation_passes_other_errors_through(capsys):
+    # Real failures keep the normal traceback/exit-1 path: only the
+    # resumable quota abort gets the soft handling.
+    async def run():
+        raise RuntimeError("something actually broke")
+
+    with pytest.raises(RuntimeError, match="something actually broke"):
+        gr.run_generation(run)
 
 
 @pytest.mark.asyncio
