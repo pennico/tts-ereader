@@ -274,3 +274,58 @@ async def test_cached_segment_skips_engine(tmp_path):
     out = await gr.synth_line(eng, "Kore", "test line", tmp_path, pace=0)
     assert out == seg
     assert eng.calls == 0
+
+
+# ── copyright recitation filter ────────────────────────────────────────────
+
+
+def _filter_error():
+    # Shape of the engine's error when Gemini returns finishReason OTHER
+    # with no content (the recitation filter).
+    from app.engines.base import EngineError
+    return EngineError(
+        "unexpected Gemini response shape after 3 attempts: 'content' "
+        "[response: {\"keys\": [\"candidates\", \"modelVersion\", "
+        "\"responseId\", \"usageMetadata\"], \"candidate_count\": 1, "
+        "\"finish_reasons\": [\"OTHER\"], \"candidate_keys\": "
+        "[[\"finishMessage\", \"finishReason\", \"index\"]], "
+        "\"prompt_feedback\": null}]")
+
+
+@pytest.mark.asyncio
+async def test_recitation_filter_splits_into_sentences(tmp_path):
+    # The filter blocks some passages wholesale while accepting the same
+    # text sentence by sentence: split, synthesize per sentence, stitch.
+    text = "One sentence here. Another one there."
+    eng = _FakeEngine([_filter_error(), _speech_wav(), _speech_wav()])
+    seg = await gr.synth_line(eng, "Kore", text, tmp_path, pace=0)
+    assert eng.calls == 3  # full line blocked, then two sentences
+    assert seg.exists() and seg.stat().st_size > 1000
+    with wave.open(str(seg)) as w:
+        assert w.getnframes() > 0  # a valid stitched WAV
+    # The sentence pieces are cached too, so a re-run spends nothing.
+    eng2 = _FakeEngine([_filter_error()])
+    out = await gr.synth_line(eng2, "Kore", text, tmp_path, pace=0)
+    assert out == seg
+    assert eng2.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_recitation_filter_unsplittable_line_reraises(tmp_path):
+    # No sentence boundary to split at: the original error propagates
+    # (the run stays resumable via the cache).
+    eng = _FakeEngine([_filter_error()])
+    with pytest.raises(Exception, match="unexpected Gemini response"):
+        await gr.synth_line(eng, "Kore", "no boundary at all",
+                            tmp_path, pace=0)
+
+
+@pytest.mark.asyncio
+async def test_other_engine_errors_not_treated_as_filter(tmp_path):
+    # Only the finishReason-OTHER shape triggers the split fallback;
+    # unrelated EngineErrors surface unchanged.
+    from app.engines.base import EngineError
+    eng = _FakeEngine([EngineError("some other failure")])
+    with pytest.raises(Exception, match="some other failure"):
+        await gr.synth_line(eng, "Kore", "One sentence. Another.",
+                            tmp_path, pace=0)
