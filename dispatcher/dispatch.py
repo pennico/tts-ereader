@@ -563,6 +563,7 @@ def budget_read():
     The counter file is shared by all repos' dispatchers (one subscription,
     one budget) and lives outside the repos, next to .publish-flags. A
     missing or unreadable file must never block a tick: start at zero.
+    A type-invalid sessions counter also counts as zero.
     """
     today = time.strftime("%Y-%m-%d")
     try:
@@ -572,6 +573,8 @@ def budget_read():
         entry = data.get(today)
         if not isinstance(entry, dict):
             entry = {}
+        if not isinstance(entry.get("sessions", 0), int):
+            entry["sessions"] = 0
     except (OSError, ValueError):
         entry = {}
     return today, entry
