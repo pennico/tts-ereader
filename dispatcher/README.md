@@ -62,12 +62,17 @@ the durable record.
   JSON logs).
 - Implementation sessions run `--max-turns 150`; qa/adversarial/verify
   sessions run `--max-turns $DISPATCH_MAX_TURNS_REVIEW` (default 60).
-- Every session launch checks and increments a shared daily counter
-  (`<projects>/.session-budget.json`, all repos, one budget). At
+- Every session launch reserves a slot in a shared daily counter
+  (`<projects>/.session-budget.json`, all repos, one budget) — one
+  locked check-count-write, so concurrent repos cannot overshoot the
+  cap or lose counts; a reserved slot whose launch never started
+  (vibe missing) is given back. At
   `DISPATCH_DAILY_SESSIONS` (default 14) no sessions launch for the rest
   of the day; the owner is notified once.
 - A session that dies on an API-limit signature (HTTP 402/429, quota,
-  rate limit, ...) is not a real failure: no strike, no rework, no
+  rate limit, ... — matched on the session's stderr error line only,
+  never the stdout transcript, whose tool output would false-match) is
+  not a real failure: no strike, no rework, no
   blocker — the repo pauses for `DISPATCH_QUOTA_COOLDOWN_S` (default
   6h) and retries automatically.
 
