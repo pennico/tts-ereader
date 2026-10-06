@@ -307,3 +307,111 @@ async def test_gemini_list_voices_is_language_agnostic():
     engine = GeminiTTSEngine(api_key="k")
     voices = await engine.list_voices("da")
     assert {v["name"] for v in voices} >= {"Kore", "Puck", "Charon"}
+
+
+# ── Gemini instrumentation + multi-speaker batching (issue #25) ─────────────
+
+
+def _gemini_payload_with_usage(pcm: bytes, **usage) -> dict:
+    payload = _gemini_payload(pcm)
+    payload["usageMetadata"] = usage
+    return payload
+
+
+@pytest.mark.asyncio
+async def test_gemini_counts_requests_and_tokens_from_usage_metadata():
+    # Issue #25: the per-day quota that blocks chapter runs is the REQUEST
+    # count, so every request must be counted and the response's
+    # usageMetadata tokens accumulated on the engine for the ledger.
+    pcm = b"\x00\x00" * 2400
+    client = _FakeClient(_FakeResponse(
+        payload=_gemini_payload_with_usage(
+            pcm, promptTokenCount=12, candidatesTokenCount=345,
+            totalTokenCount=357)))
+    engine = GeminiTTSEngine(api_key="k", client=client)
+    result = await engine.synthesize("Ciao", "Kore")
+    assert engine.request_count == 1
+    assert engine.token_count == 357
+    assert result.usage == {"prompt": 12, "candidates": 345, "total": 357}
+
+
+@pytest.mark.asyncio
+async def test_gemini_usage_falls_back_to_prompt_plus_candidates():
+    # Older responses may omit totalTokenCount: prompt + candidates is
+    # the accounting the ledger needs either way.
+    pcm = b"\x00\x00" * 2400
+    client = _FakeClient(_FakeResponse(
+        payload=_gemini_payload_with_usage(
+            pcm, promptTokenCount=12, candidatesTokenCount=345)))
+    engine = GeminiTTSEngine(api_key="k", client=client)
+    result = await engine.synthesize("Ciao", "Kore")
+    assert engine.token_count == 357
+    assert result.usage["total"] == 357
+
+
+@pytest.mark.asyncio
+async def test_gemini_no_usage_metadata_is_not_an_error():
+    pcm = b"\x00\x00" * 2400
+    client = _FakeClient(_FakeResponse(payload=_gemini_payload(pcm)))
+    engine = GeminiTTSEngine(api_key="k", client=client)
+    result = await engine.synthesize("Ciao", "Kore")
+    assert result.usage is None
+    assert engine.token_count == 0
+    assert engine.request_count == 1
+
+
+@pytest.mark.asyncio
+async def test_gemini_counts_429_requests_too():
+    # A 429 answer still consumed a request against the daily quota.
+    client = _FakeClient(_FakeResponse(status_code=429, text="rate limited"))
+    engine = GeminiTTSEngine(api_key="k", client=client)
+    with pytest.raises(EngineError):
+        await engine.synthesize("Ciao", "Kore")
+    assert engine.request_count == 1
+
+
+@pytest.mark.asyncio
+async def test_gemini_synthesize_multi_builds_multi_speaker_request():
+    # Issue #25: batching multiple lines into ONE request keeps per-line
+    # voice casting via multiSpeakerVoiceConfig — each distinct voice is
+    # a speaker, each line is labeled with its voice.
+    pcm = b"\x00\x00" * 2400
+    client = _FakeClient(_FakeResponse(payload=_gemini_payload(pcm)))
+    engine = GeminiTTSEngine(api_key="k", client=client)
+    result = await engine.synthesize_multi(
+        [("Rami", "prima riga"), ("Kore", "seconda riga"), ("Rami", "terza")],
+        style="Read the conversation aloud.",
+    )
+    assert result.audio[:4] == b"RIFF"
+    body = client.requests[0]["json"]
+    text = body["contents"][0]["parts"][0]["text"]
+    assert text.startswith("Read the conversation aloud.")
+    assert "Rami: prima riga" in text
+    assert "Kore: seconda riga" in text
+    assert "Rami: terza" in text
+    speakers = body["generationConfig"]["speechConfig"][
+        "multiSpeakerVoiceConfig"]["speakerVoiceConfigs"]
+    assert [s["speaker"] for s in speakers] == ["Rami", "Kore"]
+    assert speakers[0]["voiceConfig"]["prebuiltVoiceConfig"][
+        "voiceName"] == "Rami"
+    assert engine.request_count == 1  # one request for three lines
+
+
+@pytest.mark.asyncio
+async def test_gemini_synthesize_multi_defaults_to_engine_style():
+    pcm = b"\x00\x00" * 2400
+    client = _FakeClient(_FakeResponse(payload=_gemini_payload(pcm)))
+    engine = GeminiTTSEngine(api_key="k", client=client)  # default style
+    await engine.synthesize_multi([("Kore", "una riga")])
+    text = client.requests[0]["json"]["contents"][0]["parts"][0]["text"]
+    assert text.startswith("Read the following")
+
+
+@pytest.mark.asyncio
+async def test_gemini_synthesize_multi_empty_style_sends_bare_conversation():
+    pcm = b"\x00\x00" * 2400
+    client = _FakeClient(_FakeResponse(payload=_gemini_payload(pcm)))
+    engine = GeminiTTSEngine(api_key="k", client=client, style="")
+    await engine.synthesize_multi([("Kore", "una riga")], style="")
+    text = client.requests[0]["json"]["contents"][0]["parts"][0]["text"]
+    assert text == "Kore: una riga"

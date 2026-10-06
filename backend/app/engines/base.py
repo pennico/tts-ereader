@@ -25,6 +25,9 @@ class SynthesisResult:
 
     format: "wav" (PCM16) or "mp3"; both decode via the Web Audio API.
     word_boundaries is None for engines without timestamps (AC-507).
+    usage is the provider's token accounting for the request (issue #25:
+    {"prompt": int, "candidates": int, "total": int}), or None when the
+    provider does not report it.
     """
 
     audio: bytes
@@ -32,6 +35,7 @@ class SynthesisResult:
     duration_ms: float
     format: str = "wav"
     word_boundaries: list[WordBoundary] | None = field(default=None)
+    usage: dict | None = field(default=None)
 
 
 class EngineError(Exception):

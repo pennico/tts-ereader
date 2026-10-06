@@ -6,6 +6,14 @@ SMIL-synced paragraph per line), but synthesis goes through the Gemini
 TTS engine one line at a time — the "box" method validated in
 out/voice_tests: short requests, no style prefix, per-line voices.
 
+The blocking quota is the per-day REQUEST count (100/day on
+gemini-3.8-flash-tts), not tokens, so --lines-per-request N (issue #25)
+batches up to N prepared lines into ONE multi-speaker request while
+keeping per-line voice casting, per-line SMIL offsets (the batch take is
+split back into per-line segments at silence gaps), per-batch cache
+keys, and the per-line fallbacks (recitation-filter sentence-splitting,
+exit-75 quota abort). Default 1 = the original per-line behavior.
+
 Every line's audio is cleaned (shared/audio_clean.py: the 3.8 end-of-
 response noise burst and start click are trimmed, edges faded) and
 cached under the work dir, so runs are resumable: re-running skips
@@ -16,11 +24,18 @@ rewrite every line, invalidate the whole segment cache and re-spend
 the chapter's Gemini quota on every run — a quota-limited run could
 never finish. --reprepare forces regeneration.
 
+Every run appends its measured request/token counts (from the API
+responses' usageMetadata) to the quota ledger (default
+out/quota_ledger.json, issue #25) — on success, quota abort, and
+failure alike.
+
 Usage:
   python3 gemini_readaloud.py --epub book.epub --list-chapters
   python3 gemini_readaloud.py --epub book.epub --chapter 3 --slice 1200 \
       --single Kore --output out/slice.epub
   python3 gemini_readaloud.py --epub book.epub --all --output out/book.epub
+  python3 gemini_readaloud.py --epub book.epub --chapter 3 \
+      --lines-per-request 10 --output out/ch1.epub
 
 Cast (default): narration Kore, male dialogue Rami, female dialogue
 Leda. --single VOICE reads everything with one voice.
@@ -62,7 +77,8 @@ from epub_readaloud import (  # noqa: E402
     strip_title_leak,
 )
 from poc_reader import chunk_text, extract_epub_chapter, list_epub_chapters  # noqa: E402
-from shared.audio_clean import clean_pcm  # noqa: E402
+from shared.audio_clean import THRESH_QUIET, clean_pcm  # noqa: E402
+from shared.quota_ledger import add_entry, day_totals  # noqa: E402
 from shared.text_preparation import llm_prepare, parse_lines, split_long_narration  # noqa: E402
 
 RATE_DEFAULT = 24000  # Gemini TTS output sample rate
@@ -176,6 +192,29 @@ def _sentence_pieces(text):
     return [s for s in re.split(r"(?<=[.!?…])\s+", text.strip()) if s]
 
 
+async def _request_with_quota_retries(request, max_retries=5):
+    """Await request() with the 429 policy shared by every Gemini call.
+
+    Daily-quota 429s do not recover within a run: the per-day limit is
+    a hard wall (observed limit: 100 requests/day per model) that resets
+    hours later. Retry-backoff only burns ten minutes against it; abort
+    at once — cached segments make the run resumable. Per-minute 429s
+    are transient and keep the 60-240 s backoff retry.
+    """
+    for attempt in range(max_retries):
+        try:
+            return await request()
+        except Exception as e:
+            if _is_daily_quota(e):
+                raise QuotaExhausted(_quota_abort_message(e)) from e
+            if "429" in str(e) and attempt < max_retries - 1:
+                wait = 60 * (attempt + 1)
+                print(f"    429, waiting {wait}s...", flush=True)
+                await asyncio.sleep(wait)
+            else:
+                raise
+
+
 async def synth_line(eng, voice, text, cache_dir, pace, max_retries=5):
     """Synthesize one line, clean it, cache it. Returns the WAV path.
 
@@ -188,25 +227,8 @@ async def synth_line(eng, voice, text, cache_dir, pace, max_retries=5):
     if seg.exists() and seg.stat().st_size > 1000:
         return seg
     try:
-        for attempt in range(max_retries):
-            try:
-                res = await eng.synthesize(text, voice=voice)
-                break
-            except Exception as e:
-                # Daily-quota 429s do not recover within a run: the
-                # per-day limit is a hard wall (observed limit: 100
-                # requests/day per model) that resets hours later.
-                # Retry-backoff only burns ten minutes against it;
-                # abort at once — cached segments make the run
-                # resumable.
-                if _is_daily_quota(e):
-                    raise QuotaExhausted(_quota_abort_message(e)) from e
-                if "429" in str(e) and attempt < max_retries - 1:
-                    wait = 60 * (attempt + 1)
-                    print(f"    429 ({voice}), waiting {wait}s...", flush=True)
-                    await asyncio.sleep(wait)
-                else:
-                    raise
+        res = await _request_with_quota_retries(
+            lambda: eng.synthesize(text, voice=voice), max_retries)
     except EngineError as e:
         parts = _sentence_pieces(text)
         if not _is_content_filter(e) or len(parts) < 2:
@@ -231,6 +253,209 @@ async def synth_line(eng, voice, text, cache_dir, pace, max_retries=5):
         w.writeframes(cleaned)
     await asyncio.sleep(pace)
     return seg
+
+
+# ── request-efficient batching (issue #25) ─────────────────────────────────
+#
+# The quota that blocks chapter runs is the per-day REQUEST count (100/day
+# on 3.8-flash-tts), not tokens: one request per prepared line spends
+# 100+ requests on a single chapter. --lines-per-request N sends up to N
+# lines as ONE multi-speaker request (per-line voice casting is kept:
+# each line is labeled with its cast voice). The batch's single audio
+# take is split back into per-line segments at silence gaps so the
+# SMIL offsets stay per-line; when the audio cannot be aligned
+# confidently, the batch falls back to per-line synthesis (a few extra
+# requests beat silently misaligned highlighting).
+
+# Minimal instruction for multi-speaker requests. Single lines are sent
+# bare (the box method found no style prefix best), but a labeled
+# conversation needs the model to treat the labels as speaker
+# assignments, not text to read aloud.
+BATCH_STYLE = ("Read the conversation aloud, each line in the labeled "
+               "speaker's voice. Do not read the labels aloud.")
+
+BATCH_SPLIT_MIN_GAP_MS = 200   # silence run that can act as a line boundary
+BATCH_SPLIT_TOLERANCE_S = 1.5  # base max distance expected vs chosen boundary
+BATCH_SPLIT_TOLERANCE_FRAC = 0.35  # ...or 35% of the average line duration
+BATCH_MIN_SEGMENT_S = 0.25     # a line's audio cannot be shorter than this
+
+
+def _silence_gaps(pcm, rate):
+    """(start, end) sample ranges of silence runs >= BATCH_SPLIT_MIN_GAP_MS.
+
+    10 ms windows whose RMS is at or below audio_clean's THRESH_QUIET,
+    mirroring clean_pcm's notion of silence.
+    """
+    import struct
+
+    win = max(1, rate // 100)
+    samples = struct.unpack(f"<{len(pcm) // 2}h", pcm[:len(pcm) // 2 * 2])
+    n = len(samples) // win
+    min_wins = max(1, BATCH_SPLIT_MIN_GAP_MS // 10)
+    gaps, start = [], None
+    for i in range(n):
+        chunk = samples[i * win:(i + 1) * win]
+        rms = (sum(s * s for s in chunk) / win) ** 0.5
+        quiet = rms <= THRESH_QUIET
+        if quiet and start is None:
+            start = i
+        elif not quiet and start is not None:
+            if i - start >= min_wins:
+                gaps.append((start * win, i * win))
+            start = None
+    if start is not None and n - start >= min_wins:
+        gaps.append((start * win, n * win))
+    return gaps
+
+
+def _assign_boundaries(mids, expected):
+    """Optimal monotone assignment of line boundaries to silence gaps.
+
+    Picks len(expected) strictly increasing gap midpoints minimizing the
+    total distance to the expected positions (boundaries must stay in
+    reading order). Returns the chosen gap indices, or None when there
+    are fewer gaps than boundaries.
+    """
+    m, k = len(mids), len(expected)
+    if m < k:
+        return None
+    inf = float("inf")
+    # dp[i][j]: boundary j at gap i, boundaries 0..j on gaps 0..i-1
+    dp = [[inf] * k for _ in range(m)]
+    parent = [[-1] * k for _ in range(m)]
+    for i in range(m):
+        dp[i][0] = abs(mids[i] - expected[0])
+        for j in range(1, k):
+            best, best_i = inf, -1
+            for i2 in range(i):
+                if dp[i2][j - 1] < best:
+                    best, best_i = dp[i2][j - 1], i2
+            if best < inf:
+                dp[i][j] = abs(mids[i] - expected[j]) + best
+                parent[i][j] = best_i
+    total, last = inf, -1
+    for i in range(m):
+        if dp[i][k - 1] < total:
+            total, last = dp[i][k - 1], i
+    if last < 0:
+        return None
+    chosen = [0] * k
+    i, j = last, k - 1
+    while j >= 0:
+        chosen[j] = i
+        i = parent[i][j]
+        j -= 1
+    return chosen
+
+
+def split_batch_pcm(pcm, width, rate, char_weights):
+    """Split a batch's cleaned PCM into one chunk per line, or None.
+
+    Boundary candidates are the silence gaps between lines; each boundary
+    is placed at the gap closest to the position proportional to
+    cumulative text length (speech time tracks text length closely
+    enough for this). Returns None when no confident split exists —
+    the caller then falls back to per-line synthesis rather than emit
+    misaligned SMIL offsets.
+    """
+    if width != 2 or len(char_weights) < 2 or not char_weights:
+        return None
+    gaps = _silence_gaps(pcm, rate)
+    k = len(char_weights) - 1
+    if len(gaps) < k:
+        return None
+    total_chars = sum(char_weights)
+    total_frames = len(pcm) // 2
+    expected = [total_frames * sum(char_weights[:j + 1]) / total_chars
+                for j in range(k)]
+    mids = [(s + e) // 2 for s, e in gaps]
+    chosen = _assign_boundaries(mids, expected)
+    if chosen is None:
+        return None
+    avg_line_s = (total_frames / rate) / len(char_weights)
+    tol = rate * max(BATCH_SPLIT_TOLERANCE_S,
+                     BATCH_SPLIT_TOLERANCE_FRAC * avg_line_s)
+    min_frames = rate * BATCH_MIN_SEGMENT_S
+    bounds = []
+    for j, gi in enumerate(chosen):
+        if abs(mids[gi] - expected[j]) > tol:
+            return None
+        bounds.append(mids[gi])
+    chunks, prev = [], 0
+    for b in bounds + [total_frames]:
+        if b - prev < min_frames:
+            return None
+        chunks.append(pcm[prev * 2:b * 2])
+        prev = b
+    return chunks
+
+
+def _batch_key(eng, batch):
+    """Cache key for one batch (model + every line's voice and text)."""
+    joined = "|".join(f"{v}|{t}" for v, t in batch)
+    return hashlib.sha1(f"{eng.model}|{joined}".encode()).hexdigest()[:16]
+
+
+def _per_line_seg(cache_dir, eng, voice, text):
+    """The per-line cache path for one line (same key synth_line uses)."""
+    key = hashlib.sha1(f"{eng.model}|{voice}|{text}".encode()).hexdigest()[:16]
+    return cache_dir / f"{voice}-{key}.wav"
+
+
+async def synth_batch(eng, batch, cache_dir, pace, max_retries=5):
+    """Synthesize up to N lines in ONE request. Returns a WAV path per line.
+
+    batch: [(voice, text)] in reading order. Keeps the per-line
+    guarantees of synth_line: per-line voice casting (a multi-speaker
+    request), per-batch cache keys (resumable), the recitation-filter
+    sentence-splitting and exit-75 quota behavior (both via per-line
+    fallback), and re-use of segments already paid for in earlier
+    per-line runs (a fully per-line-cached batch is stitched from the
+    per-line cache without a new request).
+    """
+    if len(batch) == 1:
+        voice, text = batch[0]
+        return [await synth_line(eng, voice, text, cache_dir, pace, max_retries)]
+    key = _batch_key(eng, batch)
+    split_files = [cache_dir / f"batch-{key}-{i:03d}.wav"
+                   for i in range(len(batch))]
+    if all(p.exists() and p.stat().st_size > 1000 for p in split_files):
+        return split_files
+    cached = [_per_line_seg(cache_dir, eng, v, t) for v, t in batch]
+    if all(p.exists() and p.stat().st_size > 1000 for p in cached):
+        print("    batch fully cached per-line from earlier runs", flush=True)
+        return cached
+    try:
+        res = await _request_with_quota_retries(
+            lambda: eng.synthesize_multi(list(batch), style=BATCH_STYLE),
+            max_retries)
+    except EngineError as e:
+        if not _is_content_filter(e):
+            raise
+        print(f"    recitation filter on batch, synthesizing "
+              f"{len(batch)} lines separately", flush=True)
+        return [await synth_line(eng, v, t, cache_dir, pace, max_retries)
+                for v, t in batch]
+    with wave.open(io.BytesIO(res.audio)) as w:
+        rate, width = w.getframerate(), w.getsampwidth()
+        pcm = w.readframes(w.getnframes())
+    cleaned = clean_pcm(pcm, width, rate)
+    if not cleaned:
+        raise RuntimeError("empty audio for batch")
+    chunks = split_batch_pcm(cleaned, width, rate, [len(t) for _v, t in batch])
+    if chunks is None:
+        print("    batch audio cannot be aligned to lines, "
+              "synthesizing lines separately", flush=True)
+        return [await synth_line(eng, v, t, cache_dir, pace, max_retries)
+                for v, t in batch]
+    for path, chunk in zip(split_files, chunks):
+        with wave.open(str(path), "w") as w:
+            w.setnchannels(1)
+            w.setsampwidth(width)
+            w.setframerate(rate)
+            w.writeframes(chunk)
+    await asyncio.sleep(pace)
+    return split_files
 
 
 def stitch(segments, gap_ms):
@@ -303,12 +528,29 @@ async def process_chapter(client, args, idx, work_dir, eng):
     print(f"  {len(segments)} lines: " + ", ".join(f"{k} x{v}" for k, v in cast.items()),
           flush=True)
 
-    print("  synthesizing with Gemini (box method)...", flush=True)
-    seg_files = []
-    for i, (s, _g, text_line, voice, _vn) in enumerate(segments):
-        path = await synth_line(eng, voice, text_line, cache_dir, args.pace)
-        seg_files.append(path)
-        print(f"    line {i:03d} [{s or 'narr'} -> {voice}] done", flush=True)
+    npr = max(1, getattr(args, "lines_per_request", 1) or 1)
+    if npr > 1:
+        print(f"  synthesizing with Gemini (batched, {npr} lines/request)...",
+              flush=True)
+        seg_files = []
+        batches = [segments[i:i + npr] for i in range(0, len(segments), npr)]
+        for bi, b in enumerate(batches):
+            turns = [(voice, text_line)
+                     for _s, _g, text_line, voice, _vn in b]
+            paths = await synth_batch(eng, turns, cache_dir, args.pace)
+            seg_files.extend(paths)
+            first = bi * npr
+            voices = "/".join(sorted({v for v, _t in turns}))
+            print(f"    batch {bi + 1:02d}/{len(batches)} "
+                  f"lines {first:03d}-{first + len(b) - 1:03d} "
+                  f"[{voices}] done", flush=True)
+    else:
+        print("  synthesizing with Gemini (box method)...", flush=True)
+        seg_files = []
+        for i, (s, _g, text_line, voice, _vn) in enumerate(segments):
+            path = await synth_line(eng, voice, text_line, cache_dir, args.pace)
+            seg_files.append(path)
+            print(f"    line {i:03d} [{s or 'narr'} -> {voice}] done", flush=True)
 
     wav_bytes, offsets = stitch(seg_files, args.gap_ms)
     (ch_dir / "audio.wav").write_bytes(wav_bytes)
@@ -327,11 +569,14 @@ async def process_chapter(client, args, idx, work_dir, eng):
     }
 
 
-def run_generation(run):
+def run_generation(run, on_finish=None):
     """Await the generation, converting a resumable quota abort into a
     clean one-line message and exit code EXIT_QUOTA (75) instead of a
     traceback and exit 1 — wrappers must be able to tell "re-run
-    tomorrow" apart from a real failure (issue #21)."""
+    tomorrow" apart from a real failure (issue #21). on_finish runs on
+    every exit path (including the quota abort and real failures): a
+    run that spent requests updates the quota ledger even when it does
+    not finish (issue #25)."""
     try:
         asyncio.run(run())
     except QuotaExhausted as e:
@@ -340,6 +585,9 @@ def run_generation(run):
         print("Re-run after the quota reset to resume; "
               "cached lines are not re-spent.", flush=True)
         sys.exit(EXIT_QUOTA)
+    finally:
+        if on_finish:
+            on_finish()
 
 
 def main():
@@ -368,6 +616,15 @@ def main():
                         help="Regenerate the prepared text even if cached "
                              "(cached segments for old lines are not "
                              "deleted)")
+    parser.add_argument("--lines-per-request", type=int, default=1,
+                        help="Batch N prepared lines into one Gemini request "
+                             "(request-efficient mode, issue #25; default "
+                             "%(default)s = one request per line, the box "
+                             "method)")
+    parser.add_argument("--quota-ledger",
+                        default=str(SCRIPT_DIR / "out" / "quota_ledger.json"),
+                        help="Quota ledger this run's requests/tokens are "
+                             "appended to (issue #25)")
     parser.add_argument("--list-chapters", action="store_true")
     args = parser.parse_args()
 
@@ -418,11 +675,13 @@ def main():
     files = {"META-INF/container.xml": CONTAINER, "styles.css": CSS}
     chapter_ids, durations = [], {}
     t0 = time.time()
+    eng_holder = {}
 
     # 120 s read timeout: 3.8 responses for ~300-char lines can exceed 30 s
     async def run():
         async with httpx.AsyncClient(timeout=120.0) as hc:
             eng = GeminiTTSEngine(model=args.model, style="", client=hc)
+            eng_holder["eng"] = eng
             for idx in indices:
                 print(f"\n=== Chapter {idx} ===", flush=True)
                 result = await process_chapter(client, args, idx, work_dir, eng)
@@ -433,7 +692,24 @@ def main():
                 chapter_ids.append(ch)
                 durations[ch] = result["duration"]
 
-    run_generation(run)
+    def record_usage():
+        """Append this run's measured requests/tokens to the quota ledger
+        (issue #25) — also on the quota-abort and failure paths, because
+        those requests were spent too."""
+        eng = eng_holder.get("eng")
+        if eng is None or not (eng.request_count or eng.token_count):
+            return
+        entry = add_entry(args.quota_ledger, model=args.model,
+                          run_id=time.strftime("%Y-%m-%dT%H:%M:%S"),
+                          requests=eng.request_count,
+                          tokens=eng.token_count)
+        totals = day_totals(args.quota_ledger, model=args.model)
+        print(f"  quota: {entry['requests']} requests, "
+              f"{entry['tokens']} tokens this run; "
+              f"{totals['requests']} requests today for {args.model} "
+              f"(ledger: {args.quota_ledger})", flush=True)
+
+    run_generation(run, on_finish=record_usage)
 
     title, creator = source_metadata(args.epub)
     files["nav.xhtml"] = nav_doc(
