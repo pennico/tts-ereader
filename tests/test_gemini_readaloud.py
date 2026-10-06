@@ -245,6 +245,41 @@ async def test_daily_quota_429_aborts_without_retry(tmp_path):
     assert eng.calls == 1  # aborted at once, no retries
 
 
+@pytest.mark.asyncio
+async def test_daily_quota_429_snake_case_metric_aborts(tmp_path):
+    # The live API now names the metric in snake_case
+    # (generate_requests_per_model_per_day, issue #23); the literal
+    # "PerDay" match missed it and the abort surfaced as exit 1 after
+    # ten minutes of useless backoff. Both formats must abort at once.
+    from app.engines.base import EngineError
+    live = EngineError(
+        'Gemini API error 429: {"error": {"code": 429, "message": '
+        '"You exceeded your current quota ... \\n* Quota exceeded for '
+        'metric: generativelanguage.googleapis.com/'
+        'generate_requests_per_model_per_day, limit: 100, '
+        'model: gemini-3.8-flash-tts\\nPlease retry in 14h12m2.7s.", '
+        '"status": "RESOURCE_EXHAUSTED"}}')
+    eng = _FakeEngine([live, live])
+    with pytest.raises(gr.QuotaExhausted, match="daily quota") as ei:
+        await gr.synth_line(eng, "Kore", "test line", tmp_path, pace=0)
+    assert eng.calls == 1  # aborted at once, no backoff retries
+    # The API's own retry hint is surfaced to the owner.
+    assert "retry in 14h12m2.7s" in str(ei.value)
+
+
+def test_is_daily_quota_matches_both_metric_spellings():
+    from app.engines.base import EngineError as EE
+    camel = _quota_error()  # GenerateRequestsPerDayPerProjectPerModel
+    snake = EE("429 ... generate_requests_per_model_per_day ...")
+    spaced = EE("429 ... generate requests per day ...")
+    minute = _quota_error("GenerateRequestsPerMinutePerProjectPerModel")
+    assert gr._is_daily_quota(camel)
+    assert gr._is_daily_quota(snake)
+    assert gr._is_daily_quota(spaced)
+    assert not gr._is_daily_quota(minute)
+    assert not gr._is_daily_quota(EE("Gemini API error 500: boom"))
+
+
 def test_quota_abort_exits_with_distinct_code(capsys):
     # The quota abort is resumable, not a crash: it must surface as a
     # one-line message and exit code 75 so wrapper jobs (homelab
