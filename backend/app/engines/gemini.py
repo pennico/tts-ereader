@@ -221,38 +221,53 @@ class GeminiTTSEngine(TTSEngine):
         turns: list[tuple[str, str]],
         style: str | None = None,
     ) -> SynthesisResult:
-        """One conversation request for several lines (issue #25).
+        """One request for several lines (issue #25).
 
-        turns: [(voice, text)] in reading order. The request uses
-        multiSpeakerVoiceConfig: each distinct voice becomes a speaker
-        label ("Rami: <line>"), and the model reads each line in the
-        labeled speaker's voice without speaking the labels. One request
-        synthesizes all turns as one continuous take — the request-
-        efficient mode for per-day request quotas.
+        turns: [(voice, text)] in reading order. One voice: a plain
+        single-voice request with the lines as paragraphs. Two voices: a
+        multi-speaker request — each voice becomes a speaker label
+        ("Rami: <line>") and the model reads each line in the labeled
+        speaker's voice without speaking the labels. More than two
+        voices is rejected locally: the API requires exactly 2
+        speaker_voice_configs, so the caller splits the batch.
         """
         voices: list[str] = []
         for voice, _text in turns:
             if voice not in voices:
                 voices.append(voice)
-        text = "\n\n".join(f"{v}: {t}" for v, t in turns)
+        if len(voices) > 2:
+            raise EngineError(
+                "Gemini multi-speaker requests take at most 2 voices "
+                f"(got {len(voices)}): split the batch so each request "
+                "has at most 2 distinct voices")
         style = self.style if style is None else style
+        if len(voices) == 1:
+            text = "\n\n".join(t for _v, t in turns)
+            speech_config: dict = {
+                "voiceConfig": {
+                    "prebuiltVoiceConfig": {"voiceName": voices[0]}
+                }
+            }
+        else:
+            text = "\n\n".join(f"{v}: {t}" for v, t in turns)
+            speech_config = {
+                "multiSpeakerVoiceConfig": {"speakerVoiceConfigs": [
+                    {
+                        "speaker": v,
+                        "voiceConfig": {
+                            "prebuiltVoiceConfig": {"voiceName": v}
+                        },
+                    }
+                    for v in voices
+                ]}
+            }
         payload = {
             "contents": [{"parts": [
                 {"text": f"{style} {text}" if style else text}
             ]}],
             "generationConfig": {
                 "responseModalities": ["AUDIO"],
-                "speechConfig": {
-                    "multiSpeakerVoiceConfig": {"speakerVoiceConfigs": [
-                        {
-                            "speaker": v,
-                            "voiceConfig": {
-                                "prebuiltVoiceConfig": {"voiceName": v}
-                            },
-                        }
-                        for v in voices
-                    ]}
-                },
+                "speechConfig": speech_config,
             },
         }
         pcm, mime, usage = await self._generate_audio(payload)

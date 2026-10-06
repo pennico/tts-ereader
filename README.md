@@ -178,10 +178,39 @@ runs are resumable across days (issue #17):
   the API's own "retry in ..." hint and exits with code **75**
   (`EX_TEMPFAIL`), so wrapper jobs can tell "re-run after the reset to
   resume" apart from a real failure (issue #21).
+- **Request-efficient mode** (issue #25): `--lines-per-request N`
+  batches up to N prepared lines into ONE Gemini request — the
+  blocking quota is the per-day REQUEST count (100/day on
+  3.8-flash-tts), not tokens, and one request per line spends the
+  whole bucket on a single chapter. Per-line voice casting is kept
+  (2-voice batches go out as labeled multi-speaker conversations —
+  the API requires exactly 2 speaker configs, so batches spanning 3
+  voices are split; 1-voice batches go out as plain multi-paragraph
+  requests). The batch's single take is split back into per-line
+  segments at silence gaps, so the SMIL offsets stay per-line; a
+  batch that cannot be aligned confidently (or hits the recitation
+  filter) falls back to per-line synthesis — a few extra requests
+  beat misaligned highlighting. Batches already fully cached per-line
+  from earlier runs are stitched from the per-line cache without a
+  new request. Default 1 = the original per-line box method.
+- **Quota ledger** (issue #25): every run appends its measured
+  request/token counts (from the API responses' `usageMetadata`) to
+  `out/quota_ledger.json` — on success, quota abort, and failure
+  alike — and prints the day's total for the model. Wrappers read the
+  ledger (`shared/quota_ledger.py`) to report spend in notifications.
+  Measured comparison of per-line vs batched synthesis (requests,
+  tokens, alignment error, samples):
+  `out/voice_tests/SUMMARY-2026-10-06-request-efficiency.md` and
+  `docs/REQUEST_EFFICIENCY.md`.
 
 ```bash
 python3 gemini_readaloud.py --epub "book.epub" --chapter 3 --slice 1200 \
     --single Kore --pace 20 --output out/slice.epub
+
+# Request-efficient: whole chapters within the daily request quota
+python3 gemini_readaloud.py --epub "book.epub" --chapter 3 \
+    --narrator Rami --voice-m Rami --voice-f Kore \
+    --lines-per-request 10 --pace 20 --output out/ch1.epub
 ```
 
 A slice larger than the daily quota allows (observed 100 requests/day)

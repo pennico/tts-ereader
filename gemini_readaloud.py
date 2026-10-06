@@ -267,10 +267,10 @@ async def synth_line(eng, voice, text, cache_dir, pace, max_retries=5):
 # confidently, the batch falls back to per-line synthesis (a few extra
 # requests beat silently misaligned highlighting).
 
-# Minimal instruction for multi-speaker requests. Single lines are sent
-# bare (the box method found no style prefix best), but a labeled
-# conversation needs the model to treat the labels as speaker
-# assignments, not text to read aloud.
+# Minimal instruction for 2-voice multi-speaker requests. Single lines
+# and 1-voice batches are sent bare (the box method found no style
+# prefix best), but a labeled conversation needs the model to treat the
+# labels as speaker assignments, not text to read aloud.
 BATCH_STYLE = ("Read the conversation aloud, each line in the labeled "
                "speaker's voice. Do not read the labels aloud.")
 
@@ -402,52 +402,86 @@ def _per_line_seg(cache_dir, eng, voice, text):
     return cache_dir / f"{voice}-{key}.wav"
 
 
+def _split_batch_by_voices(batch):
+    """Split a batch into sub-batches the API can take in one request.
+
+    Multi-speaker requests allow at most 2 distinct voices (the API
+    requires exactly 2 speaker_voice_configs; a 1-voice sub-batch is
+    sent as a plain single-voice request). Lines keep their order.
+    """
+    subs, cur, cur_voices = [], [], set()
+    for voice, text in batch:
+        if cur and voice not in cur_voices and len(cur_voices) == 2:
+            subs.append(cur)
+            cur, cur_voices = [], set()
+        cur.append((voice, text))
+        cur_voices.add(voice)
+    if cur:
+        subs.append(cur)
+    return subs
+
+
 async def synth_batch(eng, batch, cache_dir, pace, max_retries=5):
-    """Synthesize up to N lines in ONE request. Returns a WAV path per line.
+    """Synthesize up to N lines in ONE request per voice-compatible
+    group. Returns a WAV path per line, in batch order.
 
     batch: [(voice, text)] in reading order. Keeps the per-line
-    guarantees of synth_line: per-line voice casting (a multi-speaker
-    request), per-batch cache keys (resumable), the recitation-filter
+    guarantees of synth_line: per-line voice casting (multi-speaker
+    requests for 2-voice groups, plain requests for 1-voice groups),
+    per-batch cache keys (resumable), the recitation-filter
     sentence-splitting and exit-75 quota behavior (both via per-line
     fallback), and re-use of segments already paid for in earlier
     per-line runs (a fully per-line-cached batch is stitched from the
     per-line cache without a new request).
     """
-    if len(batch) == 1:
-        voice, text = batch[0]
+    seg_files = []
+    for sub in _split_batch_by_voices(batch):
+        seg_files.extend(await _synth_subbatch(eng, sub, cache_dir, pace,
+                                               max_retries))
+    return seg_files
+
+
+async def _synth_subbatch(eng, sub, cache_dir, pace, max_retries=5):
+    """One request for one voice-compatible group of lines."""
+    if len(sub) == 1:
+        voice, text = sub[0]
         return [await synth_line(eng, voice, text, cache_dir, pace, max_retries)]
-    key = _batch_key(eng, batch)
+    key = _batch_key(eng, sub)
     split_files = [cache_dir / f"batch-{key}-{i:03d}.wav"
-                   for i in range(len(batch))]
+                   for i in range(len(sub))]
     if all(p.exists() and p.stat().st_size > 1000 for p in split_files):
         return split_files
-    cached = [_per_line_seg(cache_dir, eng, v, t) for v, t in batch]
+    cached = [_per_line_seg(cache_dir, eng, v, t) for v, t in sub]
     if all(p.exists() and p.stat().st_size > 1000 for p in cached):
         print("    batch fully cached per-line from earlier runs", flush=True)
         return cached
+    voices = {v for v, _t in sub}
+    # A labeled 2-voice conversation needs the instruction; a plain
+    # 1-voice group is sent bare, like the box method (issue #25).
+    style = BATCH_STYLE if len(voices) == 2 else ""
     try:
         res = await _request_with_quota_retries(
-            lambda: eng.synthesize_multi(list(batch), style=BATCH_STYLE),
+            lambda: eng.synthesize_multi(list(sub), style=style),
             max_retries)
     except EngineError as e:
         if not _is_content_filter(e):
             raise
         print(f"    recitation filter on batch, synthesizing "
-              f"{len(batch)} lines separately", flush=True)
+              f"{len(sub)} lines separately", flush=True)
         return [await synth_line(eng, v, t, cache_dir, pace, max_retries)
-                for v, t in batch]
+                for v, t in sub]
     with wave.open(io.BytesIO(res.audio)) as w:
         rate, width = w.getframerate(), w.getsampwidth()
         pcm = w.readframes(w.getnframes())
     cleaned = clean_pcm(pcm, width, rate)
     if not cleaned:
         raise RuntimeError("empty audio for batch")
-    chunks = split_batch_pcm(cleaned, width, rate, [len(t) for _v, t in batch])
+    chunks = split_batch_pcm(cleaned, width, rate, [len(t) for _v, t in sub])
     if chunks is None:
         print("    batch audio cannot be aligned to lines, "
               "synthesizing lines separately", flush=True)
         return [await synth_line(eng, v, t, cache_dir, pace, max_retries)
-                for v, t in batch]
+                for v, t in sub]
     for path, chunk in zip(split_files, chunks):
         with wave.open(str(path), "w") as w:
             w.setnchannels(1)

@@ -398,6 +398,34 @@ async def test_gemini_synthesize_multi_builds_multi_speaker_request():
 
 
 @pytest.mark.asyncio
+async def test_gemini_synthesize_multi_one_voice_is_a_plain_request():
+    # A 1-voice group is a plain single-voice request with the lines as
+    # paragraphs — the API's multi-speaker config requires exactly 2
+    # speakers, so labels are only for 2-voice conversations.
+    pcm = b"\x00\x00" * 2400
+    client = _FakeClient(_FakeResponse(payload=_gemini_payload(pcm)))
+    engine = GeminiTTSEngine(api_key="k", client=client, style="")
+    await engine.synthesize_multi([("Rami", "prima"), ("Rami", "seconda")])
+    body = client.requests[0]["json"]
+    text = body["contents"][0]["parts"][0]["text"]
+    assert text == "prima\n\nseconda"
+    assert body["generationConfig"]["speechConfig"] == {
+        "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": "Rami"}}
+    }
+
+
+@pytest.mark.asyncio
+async def test_gemini_synthesize_multi_rejects_three_voices():
+    # The API requires exactly 2 speaker_voice_configs: more than 2
+    # voices fails fast locally instead of burning a 400 request.
+    engine = GeminiTTSEngine(api_key="k", client=_FakeClient(_FakeResponse()))
+    with pytest.raises(EngineError, match="at most 2 voices"):
+        await engine.synthesize_multi(
+            [("Rami", "a"), ("Kore", "b"), ("Leda", "c")])
+    assert engine.request_count == 0  # nothing sent
+
+
+@pytest.mark.asyncio
 async def test_gemini_synthesize_multi_defaults_to_engine_style():
     pcm = b"\x00\x00" * 2400
     client = _FakeClient(_FakeResponse(payload=_gemini_payload(pcm)))
@@ -412,6 +440,7 @@ async def test_gemini_synthesize_multi_empty_style_sends_bare_conversation():
     pcm = b"\x00\x00" * 2400
     client = _FakeClient(_FakeResponse(payload=_gemini_payload(pcm)))
     engine = GeminiTTSEngine(api_key="k", client=client, style="")
-    await engine.synthesize_multi([("Kore", "una riga")], style="")
+    await engine.synthesize_multi(
+        [("Kore", "una riga"), ("Rami", "un'altra")], style="")
     text = client.requests[0]["json"]["contents"][0]["parts"][0]["text"]
-    assert text == "Kore: una riga"
+    assert text == "Kore: una riga\n\nRami: un'altra"

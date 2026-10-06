@@ -226,7 +226,7 @@ async def test_synth_batch_one_request_and_split_files(tmp_path):
     assert len(eng.calls) == 1
     assert eng.calls[0][0] == "batch"
     assert eng.calls[0][1] == tuple(BATCH3)
-    assert eng.calls[0][2] == gr.BATCH_STYLE
+    assert eng.calls[0][2] == gr.BATCH_STYLE  # 2 voices: labeled conversation
     assert len(paths) == 3
     for p in paths:
         assert p.exists() and p.stat().st_size > 1000
@@ -236,6 +236,39 @@ async def test_synth_batch_one_request_and_split_files(tmp_path):
     paths2 = await gr.synth_batch(eng2, _batch(BATCH3), tmp_path, pace=0)
     assert paths2 == paths
     assert eng2.calls == []
+
+
+@pytest.mark.asyncio
+async def test_synth_batch_one_voice_group_sent_bare(tmp_path):
+    # A 1-voice batch is a plain single-voice request (the API's
+    # multi-speaker config requires exactly 2 speakers): no labels,
+    # no conversation instruction — the box method, multi-paragraph.
+    batch = [("Rami", "prima riga"), ("Rami", "seconda riga"),
+             ("Rami", "terza riga")]
+    eng = _FakeEngine([_wav(_batch_pcm([1.0, 1.0, 1.0]))])
+    paths = await gr.synth_batch(eng, _batch(batch), tmp_path, pace=0)
+    assert len(eng.calls) == 1
+    assert eng.calls[0][2] == ""  # bare text, no BATCH_STYLE
+    assert len(paths) == 3
+
+
+@pytest.mark.asyncio
+async def test_synth_batch_splits_three_voice_batches(tmp_path):
+    # The API takes at most 2 voices per request: a batch spanning 3
+    # voices is split into voice-compatible sub-batches, one request
+    # each, and the returned paths stay in reading order.
+    batch = [("Rami", "riga uno"), ("Kore", "riga due"),
+             ("Leda", "riga tre"), ("Rami", "riga quattro")]
+    eng = _FakeEngine([
+        _wav(_batch_pcm([1.0, 1.0])),    # [Rami, Kore]
+        _wav(_batch_pcm([1.0, 1.0])),    # [Leda, Rami]
+    ])
+    paths = await gr.synth_batch(eng, _batch(batch), tmp_path, pace=0)
+    assert len(eng.calls) == 2
+    assert eng.calls[0][1] == (("Rami", "riga uno"), ("Kore", "riga due"))
+    assert eng.calls[1][1] == (("Leda", "riga tre"), ("Rami", "riga quattro"))
+    assert len(paths) == 4
+    assert all(p.exists() and p.stat().st_size > 1000 for p in paths)
 
 
 @pytest.mark.asyncio
