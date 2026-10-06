@@ -67,6 +67,15 @@ from shared.text_preparation import llm_prepare, parse_lines, split_long_narrati
 
 RATE_DEFAULT = 24000  # Gemini TTS output sample rate
 
+# sysexits EX_TEMPFAIL: a resumable abort, not a crash. Wrapper jobs
+# (homelab tts-ch1-3-run.sh) treat 75 as "quota reached, re-run to
+# resume" instead of filing a failure issue (issue #21).
+EXIT_QUOTA = 75
+
+
+class QuotaExhausted(RuntimeError):
+    """Daily Gemini quota hit mid-run; the run is resumable via the cache."""
+
 
 def load_env():
     env_path = SCRIPT_DIR / ".env"
@@ -163,7 +172,7 @@ async def synth_line(eng, voice, text, cache_dir, pace, max_retries=5):
                 # ten minutes against a wall that resets at midnight Pacific;
                 # abort at once — cached segments make the run resumable.
                 if "429" in str(e) and "PerDay" in str(e):
-                    raise RuntimeError(
+                    raise QuotaExhausted(
                         "Gemini daily quota exhausted (free tier: hard "
                         "~10 requests/day per model). Lines already "
                         "synthesized are cached; re-run tomorrow to resume "
@@ -294,6 +303,21 @@ async def process_chapter(client, args, idx, work_dir, eng):
     }
 
 
+def run_generation(run):
+    """Await the generation, converting a resumable quota abort into a
+    clean one-line message and exit code EXIT_QUOTA (75) instead of a
+    traceback and exit 1 — wrappers must be able to tell "re-run
+    tomorrow" apart from a real failure (issue #21)."""
+    try:
+        asyncio.run(run())
+    except QuotaExhausted as e:
+        print(f"\nQUOTA EXHAUSTED (resumable, exit code {EXIT_QUOTA}): {e}",
+              flush=True)
+        print("Re-run after the quota reset (midnight Pacific) to resume; "
+              "cached lines are not re-spent.", flush=True)
+        sys.exit(EXIT_QUOTA)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="gemini_readaloud: read-along EPUB with Gemini TTS")
@@ -385,7 +409,7 @@ def main():
                 chapter_ids.append(ch)
                 durations[ch] = result["duration"]
 
-    asyncio.run(run())
+    run_generation(run)
 
     title, creator = source_metadata(args.epub)
     files["nav.xhtml"] = nav_doc(

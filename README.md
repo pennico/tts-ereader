@@ -168,7 +168,10 @@ across days (issue #17):
 - A daily-quota 429 (the `PerDay` quota metric in the error body)
   aborts at once with a resumable error instead of retry-backoff: the
   quota resets at midnight Pacific, so waiting within a run cannot
-  help. Per-minute 429s keep the 60–240 s backoff retry.
+  help. Per-minute 429s keep the 60–240 s backoff retry. The abort
+  prints a one-line `QUOTA EXHAUSTED (resumable)` message and exits
+  with code **75** (`EX_TEMPFAIL`), so wrapper jobs can tell "re-run
+  tomorrow to resume" apart from a real failure (issue #21).
 
 ```bash
 python3 gemini_readaloud.py --epub "book.epub" --chapter 3 --slice 1200 \
