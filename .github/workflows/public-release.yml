@@ -38,8 +38,9 @@ jobs:
           if [ -n "$EXTRA" ]; then PATTERNS="${PATTERNS}|${EXTRA}"; fi
           LEAKS=$(grep -rniE "$PATTERNS" \
             --include='*.py' --include='*.md' --include='*.yml' \
-            --include='*.html' --include='*.json' --include='*.example' . \
-            | grep -v '^\./dispatcher/\|^\./AGENTS.md\|^\./PLAN_\|^\./ROADMAP.md\|^\./\.vibe/\|^\./\.github/' \
+            --include='*.html' --include='*.json' --include='*.example' \
+            --include='*.sh' . \
+            | grep -v '^\./dispatcher/\|^\./homelab/\|^\./AGENTS.md\|^\./PLAN_\|^\./ROADMAP.md\|^\./\.vibe/\|^\./\.github/' \
             | head -5 || true)
           if [ -n "$LEAKS" ]; then
             echo "Private patterns found in the tree to publish:" >&2
@@ -51,7 +52,7 @@ jobs:
         working-directory: repo
         run: |
           git rm -rq --cached . >/dev/null 2>&1 || true
-          rm -rf .vibe AGENTS.md PLAN_epub3_readalong.md PLAN_v1_reader.md ROADMAP.md dispatcher
+          rm -rf .vibe AGENTS.md PLAN_epub3_readalong.md PLAN_v1_reader.md ROADMAP.md dispatcher homelab
           rm -f .github/workflows/public-release.yml  # not part of the public repo
           git checkout -q --orphan pubrel-tmp
           git add -A
