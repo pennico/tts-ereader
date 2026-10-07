@@ -9,7 +9,7 @@ An AI-powered text-to-speech system that analyzes text for characters, emotion, 
 - **Italian (edge-tts hybrid)**: Good quality. `edge_reader.py` pairs Mistral LLM text preparation (cleaning, re-punctuation for speech, speaker tagging) with free Microsoft edge-tts neural voices. See "edge_reader" below.
 - **Danish**: Not supported by Voxtral. Included as a test case only.
 - **EPUB support**: Working. Text is extracted, chunked, analyzed, and synthesized per chapter.
-- **v1 (implemented)**: the reader app is delivered — see `PLAN_v1_reader.md`, `docs/SPEC_v1.md`, and `docs/ARCHITECTURE_v1.md`. M1 (library + reader view), M2 (TTS engines + voice-by-progression), M3 (voice tuning + LLM preparation with per-book voice casts), and M4 (Docker deployment + benchmark harness + docs) are implemented and merged; see `ROADMAP.md` (fully ticked). Test plan and recorded results: `docs/QA_v1.md`. Remaining open items are live-key benchmarks (AC-603/604) and the homelab manual checklist in `docs/QA_v1.md` §1.2.
+- **v1 (implemented)**: the reader app is delivered — see `PLAN_v1_reader.md`, `docs/SPEC_v1.md`, and `docs/ARCHITECTURE_v1.md`. M1 (library + reader view), M2 (TTS engines + voice-by-progression), M3 (voice tuning + LLM preparation with per-book voice casts), and M4 (Docker deployment + benchmark harness + docs) are implemented and merged; see `ROADMAP.md` (fully ticked). Test plan and recorded results: `docs/QA_v1.md`. Remaining open items are live-key benchmarks (AC-603/604) and the self-hosted manual checklist in `docs/QA_v1.md` §1.2.
 
 ## Architecture
 
@@ -178,27 +178,21 @@ runs are resumable across days (issue #17):
   the API's own "retry in ..." hint and exits with code **75**
   (`EX_TEMPFAIL`), so wrapper jobs can tell "re-run after the reset to
   resume" apart from a real failure (issue #21).
-- **Request-efficient mode** (issue #25; owner configuration
-  2026-10-07): lines are batched into ONE Gemini request per batch —
-  the blocking quota is the per-day REQUEST count (100/day on the 3.8
-  TTS models), not tokens, and one request per line spends the whole
-  bucket on a single chapter. **Default sizing**: the whole required
-  text is spread over `--daily-requests 90` requests — each request
-  carries total_chars/90 characters (capped by
-  `--max-request-chars 2000`) — so a full read fits one day's quota
-  with the remainder as margin for ad-hoc daily tests.
-  `--lines-per-request N` overrides the sizing with fixed batches;
-  `--daily-requests 0` restores the original per-line box method.
-  Per-line voice casting is kept (2-voice batches go out as labeled
-  multi-speaker conversations — the API requires exactly 2 speaker
-  configs, so batches spanning 3 voices are split; 1-voice batches
-  go out as plain multi-paragraph requests). The batch's single take
-  is split back into per-line segments at silence gaps, so the SMIL
-  offsets stay per-line; a batch that cannot be aligned confidently
-  (or hits the recitation filter) falls back to per-line synthesis —
-  a few extra requests beat misaligned highlighting. Batches already
-  fully cached per-line from earlier runs are stitched from the
-  per-line cache without a new request.
+- **Request-efficient mode** (issue #25): `--lines-per-request N`
+  batches up to N prepared lines into ONE Gemini request — the
+  blocking quota is the per-day REQUEST count (100/day on
+  3.8-flash-tts), not tokens, and one request per line spends the
+  whole bucket on a single chapter. Per-line voice casting is kept
+  (2-voice batches go out as labeled multi-speaker conversations —
+  the API requires exactly 2 speaker configs, so batches spanning 3
+  voices are split; 1-voice batches go out as plain multi-paragraph
+  requests). The batch's single take is split back into per-line
+  segments at silence gaps, so the SMIL offsets stay per-line; a
+  batch that cannot be aligned confidently (or hits the recitation
+  filter) falls back to per-line synthesis — a few extra requests
+  beat misaligned highlighting. Batches already fully cached per-line
+  from earlier runs are stitched from the per-line cache without a
+  new request. Default 1 = the original per-line box method.
 - **Quota ledger** (issue #25): every run appends its measured
   request/token counts (from the API responses' `usageMetadata`) to
   `out/quota_ledger.json` — on success, quota abort, and failure
@@ -207,23 +201,67 @@ runs are resumable across days (issue #17):
   Measured comparison of per-line vs batched synthesis (requests,
   tokens, wall time, alignment error):
   `docs/REQUEST_EFFICIENCY.md` — raw numbers in
-  `out/archive/reqeff-measurements.json` (local run artifacts, not
-  committed; the distinct audio versions live in `out/archive/`).
+  `out/voice_tests/reqeff-measurements.json` (local run artifacts,
+  not committed).
 
 ```bash
-# Owner defaults: single voice Rami, gemini-3.8-flash-lite-tts,
-# requests auto-sized to the 90/day reading budget
-python3 gemini_readaloud.py --epub "book.epub" --chapter 3 \
-    --pace 20 --output out/ch1.epub
+python3 gemini_readaloud.py --epub "book.epub" --chapter 3 --slice 1200 \
+    --single Kore --pace 20 --output out/slice.epub
 
-# Role cast instead of the single voice
+# Request-efficient: whole chapters within the daily request quota
 python3 gemini_readaloud.py --epub "book.epub" --chapter 3 \
-    --cast --pace 20 --output out/ch1.epub
+    --narrator Rami --voice-m Rami --voice-f Kore \
+    --lines-per-request 10 --pace 20 --output out/ch1.epub
 ```
 
 A slice larger than the daily quota allows (observed 100 requests/day)
 takes several days (each daily run synthesizes what the quota allows,
 then resumes the next day); paid tier removes the limit.
+
+### Choosing how to read (model + approach)
+
+Two knobs decide how a run is carried out: the **model** (`--model`,
+default `gemini-3.8-flash-tts` — the quality reference; Rami/Kore are
+the reference voices. 3.8-or-newer TTS models only: 2.5-preview-tts and
+older are retired. Observed quota on an AI Studio key: 100 requests/day
+per model — the number has changed before, so treat it as volatile) and
+the **approach**: how many prepared lines go into one request
+(`--lines-per-request`, or one `--preset` flag that expands to it and is
+printed in the run log; an explicit `--lines-per-request` wins over the
+preset).
+
+| Approach | Requests (513-line run) | Quality | When to use |
+|---|---|---|---|
+| Per-line (`--preset quality` = `--lines-per-request 1`, the default) | 513 | Best prosody: each line a fresh, self-contained delivery; exact SMIL offsets | Short runs, slices, or when the request quota does not matter |
+| Batched (`--preset balanced` = `--lines-per-request 10`) | ~53 | Coherent pacing across lines; a batch that cannot be split confidently falls back to per-line (measured 20-line 3.8-flash-lite sample: 1 of 2 batch10 takes fell back) | Whole chapters within the daily request quota |
+| Aggressive batching (`--preset fast` = `--lines-per-request 20`) | ~26 | Longest batches — one bad take affects up to 20 lines; measured 20-line 3.8-flash-lite sample: no fallbacks, boundary drift up to ~7.7 s | Big books on a tight request budget |
+
+Batching keeps per-line voice casting, per-line SMIL offsets (the batch
+take is split back into per-line segments at silence gaps), caching, and
+the per-line fallbacks; a batch that cannot be aligned confidently falls
+back to per-line synthesis. Measured tradeoffs and samples:
+`docs/REQUEST_EFFICIENCY.md`.
+
+```bash
+# Best quality, one request per line (needs quota headroom or multi-day resume)
+python3 gemini_readaloud.py --epub "book.epub" --chapter 3 \
+    --narrator Rami --voice-m Rami --voice-f Kore \
+    --preset quality --output out/ch3.epub
+
+# Recommended: whole chapters within the daily request quota
+python3 gemini_readaloud.py --epub "book.epub" --chapter 3 \
+    --narrator Rami --voice-m Rami --voice-f Kore \
+    --preset balanced --output out/ch3.epub
+
+# Fewest requests: big books on a tight budget
+python3 gemini_readaloud.py --epub "book.epub" --all \
+    --narrator Rami --voice-m Rami --voice-f Kore \
+    --preset fast --output out/book.epub
+
+# Explicit model choice (default shown)
+python3 gemini_readaloud.py --epub "book.epub" --chapter 3 \
+    --model gemini-3.8-flash-tts --preset balanced --output out/ch3.epub
+```
 
 ### Where read-along actually works
 
@@ -460,7 +498,7 @@ tts-ereader/
 ├── edge_reader.py         # edge-tts hybrid engine (LLM prep + free edge voices)
 ├── benchmark_tts.py       # TTS engine benchmark harness (owner-run, real keys)
 ├── Dockerfile             # Multi-stage image: frontend build + FastAPI runtime (M4)
-├── docker-compose.yml     # Homelab deployment: port 8000, ./data volume, healthcheck (M4)
+├── docker-compose.yml     # Self-hosted deployment: port 8000, ./data volume, healthcheck (M4)
 ├── epub_mo.py             # EPUB 3 Media Overlays generator (overlays on original XHTML)
 ├── epub_readaloud.py      # Simple read-along EPUB from prepared text (recommended)
 ├── epub_fixedlayout.py    # Fixed-layout read-along EPUB (Apple Books route)
@@ -605,7 +643,7 @@ cd .. && python3 -m uvicorn app.main:app --app-dir backend
 
 M4 makes it deployable and benchmarkable:
 
-- Docker deployment for the homelab: multi-stage `Dockerfile` (frontend
+- Docker deployment for a self-hosted server: multi-stage `Dockerfile` (frontend
   bundle → `python:3.11-slim` + ffmpeg runtime) and `docker-compose.yml`
   with a single `./data` bind mount for all persisted state, `.env`
   passthrough, healthcheck, and `restart: unless-stopped`. Runbook:
@@ -620,12 +658,12 @@ M4 makes it deployable and benchmarkable:
   in the sandbox by unit tests against the mock engine.
 - Offline indicator in the app shell (red banner when the server is
   unreachable).
-- Docs: `docs/DEPLOYMENT.md` (homelab runbook), `docs/USER_GUIDE.md`,
+- Docs: `docs/DEPLOYMENT.md` (self-hosting runbook), `docs/USER_GUIDE.md`,
   `docs/DEVELOPER_GUIDE.md`.
 
 The Docker image itself was not built in the cloud sandbox (no Docker
 daemon, 30s command limit) — the first `docker compose up -d --build` on
-the homelab is the owner's smoke test.
+the target server is the owner's smoke test.
 
 ## Technical notes
 
@@ -644,3 +682,13 @@ The PoC is validated. The next phase would be:
 2. **Web app (PWA)**: Chapter list with generation status, continuous text view with sentence-level highlighting, playback controls, progress tracking across chapters.
 3. **Backend**: Local FastAPI server that serves chapter list, triggers generation, and serves audio + manifests to the frontend.
 4. **On-demand generation**: User clicks a chapter, it generates in the background, becomes available when done.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
+
+## Contributing and security
+
+- Contributions: see [CONTRIBUTING.md](CONTRIBUTING.md).
+- Found a security issue: see [SECURITY.md](SECURITY.md) — do not open a public issue for it.
+

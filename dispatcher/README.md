@@ -1,8 +1,8 @@
 # Unattended agent dispatcher
 
-Runs the multi-agent workflow headless on an always-on runner (homelab
-container — see `pennico-ops/homelab/`) so the project progresses without
-anyone launching sessions manually.
+Runs the multi-agent workflow headless on an always-on runner (a
+self-hosted container; the owner's deployment config is private) so the
+project progresses without anyone launching sessions manually.
 
 ## What a tick does
 
