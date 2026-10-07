@@ -41,7 +41,11 @@ anyone launching sessions manually.
 (non-zero exit or timeout) per roadmap item. 2 strikes on the same item ->
 the dispatcher files a blocker issue and pauses the repo; the owner's
 answer on that issue resumes with a fresh budget. QA has the same budget:
-2 QA passes on the same PR without approval -> blocker issue + pause.
+2 failed review rounds on the same PR (reviewer label not added) ->
+blocker issue + pause. Strikes accumulate across BOTH reviewers — a
+passed review does not reset them; only a merge does — and a rework
+that could not run (API-quota pause, spent budget) undoes its round's
+strike, while a completed rework keeps it (pennico-ops #21).
 
 ## Context diet (per-session data pull)
 
@@ -80,13 +84,19 @@ the durable record.
   after the first supervised runs, calibrate it to roughly 2x the
   observed cost of a normal session (token usage is in the session
   JSON logs).
-- Implementation sessions run `--max-turns 150`; qa/adversarial/verify
-  sessions run `--max-turns $DISPATCH_MAX_TURNS_REVIEW` (default 60).
+- Implementation and architecture (`[arch]` roadmap items) sessions
+  run `--max-turns 150`; qa/adversarial/verify sessions run
+  `--max-turns $DISPATCH_MAX_TURNS_REVIEW` (default 60). `arch` is a
+  role only this repo defines; the engine's turn-cap line mentions it
+  in every copy so the engine text stays identical across repos.
 - Every session launch reserves a slot in a shared daily counter
   (`<projects>/.session-budget.json`, all repos, one budget) — one
   locked check-count-write, so concurrent repos cannot overshoot the
-  cap or lose counts; a reserved slot whose launch never started
-  (vibe missing) is given back. At
+  cap or lose counts; the file is written atomically (temp file +
+  rename) and a missing or corrupt counter is recreated at zero
+  LOUDLY in the tick log — it is live shared state, never delete or
+  hand-edit it (pennico-ops #21). A reserved slot whose launch never
+  started (vibe missing) is given back. At
   `DISPATCH_DAILY_SESSIONS` (default 14) no sessions launch for the rest
   of the day; the owner is notified once.
 - A session that dies on an API-limit signature (HTTP 402/429, quota,
