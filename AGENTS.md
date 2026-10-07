@@ -7,10 +7,10 @@ Read `README.md`, `PLAN_epub3_readalong.md` (v0 history), and
 decided questions (voice cast, book-level delivery, web-app-with-known-iOS-
 limitation trade-off).
 
-Cross-cutting operational standards (homelab environment, quotas,
-scheduled jobs, publish pipeline) live in
-[AGENTIC_WORK_STANDARDS.md](https://github.com/pennico/pennico-ops/blob/main/AGENTIC_WORK_STANDARDS.md)
-in pennico-ops.
+Cross-cutting operational standards (self-hosted environment, quotas,
+scheduled jobs, publish pipeline) live in the owner's private ops
+repository (AGENTIC_WORK_STANDARDS.md, not public); where they conflict
+with this file, this file wins for work in this repo.
 
 ## Versioning
 
@@ -45,7 +45,7 @@ resume, or signal another session. The repo is the only coordination bus.
   cleanly. Write it in plain language for a non-developer on a phone:
   what you were doing, what you need from them, the options if any, and
   end with how to answer (comment + `answered` label, or reply to the
-  Telegram notification). The owner gets a push notification, answers in
+  owner's notification channel). The owner gets a push notification, answers in
   a comment, and adds the `answered` label — the dispatcher then resumes
   with your issue and the owner's answer quoted in the prompt. Close the
   issue once your resumed session has resolved it.

@@ -27,9 +27,9 @@ This document defines the technical architecture for tts-ereader v1: a local-fir
 | **EPUB Parsing** | Custom (zipfile + lxml) | Reuse proven logic from edge_reader.py, no heavy dependencies, full control |
 | **Backend Framework** | FastAPI (Python 3.11+) | Async-native, modern, excellent for TTS service calls, automatic OpenAPI docs |
 | **Backend TTS** | Pluggable interface + adapters | Future-proof, supports multiple engines, easy to extend |
-| **File Storage** | Local filesystem | Local-first deployment, EPUBs and audio cached on homelab storage |
+| **File Storage** | Local filesystem | Local-first deployment, EPUBs and audio cached on the server's local storage |
 | **Progress Storage** | SQLite | Lightweight, file-based, no server required, ACID for progress tracking |
-| **Containerization** | Docker + docker-compose | Single-container app for homelab, reproducible deployment |
+| **Containerization** | Docker + docker-compose | Single-container app for self-hosting, reproducible deployment |
 | **Build Tool** | Vite | Fast dev server, optimized production builds, Svelte integration |
 | **Package Manager** | pnpm | Fast, disk-efficient, works well with Vite |
 
@@ -183,10 +183,10 @@ unexecuted browser suite would fake coverage. The journeys it promised are
 covered one level down: FastAPI TestClient integration tests walk
 EPUB import → library → chapter → synthesis (AC-905), and Vitest covers
 the frontend logic (audio engine, sync, pagination, themes, stores).
-Browser-level E2E remains a homelab option (Node.js + `@playwright/test`
+Browser-level E2E remains a self-hosting option (Node.js + `@playwright/test`
 + mock-engine compose profile); see `docs/QA_v1.md` §5. The pyramid for v1
 as delivered is therefore: Integration (pytest/TestClient) -> Unit
-(pytest + Vitest) -> Manual homelab checklist (`docs/QA_v1.md` §1.2).
+(pytest + Vitest) -> Manual self-hosted checklist (`docs/QA_v1.md` §1.2).
 
 ### 5.2 Test Categories
 
@@ -248,8 +248,8 @@ Create `tests/fixtures/make_fixture_epub.py` to generate synthetic EPUBs program
 
 **Docker Development:** docker-compose build, docker-compose up, open http://localhost:8000.
 
-### 6.4 Production Deployment (Homelab)
-On homelab server: mkdir data directories, copy docker-compose.yml and .env, docker-compose pull, docker-compose up -d, check logs/ps, update with git pull + docker-compose build + docker-compose up -d --no-deps.
+### 6.4 Production Deployment (self-hosted server)
+On the self-hosted server: mkdir data directories, copy docker-compose.yml and .env, docker-compose pull, docker-compose up -d, check logs/ps, update with git pull + docker-compose build + docker-compose up -d --no-deps.
 
 ---
 

@@ -1,4 +1,4 @@
-# Deployment v1 — homelab Docker
+# Deployment v1 — self-hosted Docker
 
 **Status:** Role C (Implementation) deliverable, milestone M4
 **Consumes:** docs/ARCHITECTURE_v1.md §6, PLAN_v1_reader.md
@@ -12,14 +12,14 @@ audio cache) under one data directory mounted as a volume.
 | File | Purpose |
 |---|---|
 | `Dockerfile` | Multi-stage build: `node:20-slim` builds the frontend, `python:3.11-slim` + ffmpeg runs the backend |
-| `docker-compose.yml` | Homelab service: port 8000, `./data` bind mount, `.env` passthrough, healthcheck, `restart: unless-stopped` |
+| `docker-compose.yml` | Self-hosted service: port 8000, `./data` bind mount, `.env` passthrough, healthcheck, `restart: unless-stopped` |
 | `.env.example` | Template for API keys and settings — copy to `.env`, never commit it |
 | `.dockerignore` | Keeps the image small and secrets out |
 
-## First deployment (homelab)
+## First deployment (self-hosted server)
 
 ```bash
-# on the homelab server, in the repo checkout
+# on the self-hosted server, in the repo checkout
 cp .env.example .env
 $EDITOR .env          # fill in GEMINI_API_KEY and MISTRAL_API_KEY
 
@@ -85,5 +85,5 @@ tar czf backup.tgz data/tts_ereader.db data/epubs data/covers
 - Backend health endpoint, engine fallback, and the compose/Dockerfile
   wiring are covered by the test suite (`python3 -m pytest backend/tests -q`).
 - The image itself was **not built in the cloud sandbox** (no Docker daemon,
-  30s command limit). First `docker compose up -d --build` on the homelab is
+  30s command limit). First `docker compose up -d --build` on the target server is
   the owner's smoke test; see the PR handoff for the checklist.

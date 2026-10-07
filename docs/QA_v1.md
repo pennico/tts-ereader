@@ -18,13 +18,13 @@ Four layers, matching ARCHITECTURE_v1 §5. Where each layer runs is
 constrained by the environment: the cloud sandbox has Python but **no
 Node.js** (frontend suites cannot execute there) and a 30-second command
 limit (no live TTS, no browser installs). Live-key work happens on the
-homelab.
+self-hosted server.
 
 | Layer | Tool | Location | Runs in | Status |
 |---|---|---|---|---|
 | v0 pipeline regression | pytest | `tests/` (41 tests) | CI + sandbox | Passing (2026-10-02, 41/41) |
 | Backend unit + integration | pytest + FastAPI TestClient | `backend/tests/` (110 tests) | CI + sandbox | Passing (2026-10-02, 110/110) |
-| Frontend unit | Vitest | `frontend/src/**/*.test.ts` (7 files, 55 cases) | Homelab only (`cd frontend && npm test && npm run check`) | Written; **never executed** (no Node.js in sandbox) |
+| Frontend unit | Vitest | `frontend/src/**/*.test.ts` (7 files, 55 cases) | Self-hosted only (`cd frontend && npm test && npm run check`) | Written; **never executed** (no Node.js in sandbox) |
 | E2E (Playwright) | — | — | — | **Dropped** — decision recorded in ARCHITECTURE_v1 §5.1 and §5 below |
 
 Key invariants of the automated suites:
@@ -50,7 +50,7 @@ Key invariants of the automated suites:
   `integration/test_prepare_api.py`).
 - **M4** — benchmark harness (`test_benchmark.py`, `test_benchmark_app.py`).
 
-### 1.2 Manual / homelab test list (not automatable in the sandbox)
+### 1.2 Manual / self-hosted test list (not automatable in the sandbox)
 
 | Item | Procedure | AC |
 |---|---|---|
@@ -64,7 +64,7 @@ Key invariants of the automated suites:
 The offline banner (M4) has **no automated test**: the online/offline logic
 lives inline in `frontend/src/App.svelte` and the sandbox cannot run any
 frontend suite. It is covered by the manual procedure above until a frontend
-test run happens on the homelab.
+test run happens on the self-hosted server.
 
 ## 2. Fixture inventory (AC-901)
 
@@ -101,7 +101,7 @@ TestClient, MockTTSEngine, Python 3.12.15, cloud sandbox:
 
 Caveats, stated plainly:
 
-- In-process TestClient excludes real HTTP/network overhead; homelab
+- In-process TestClient excludes real HTTP/network overhead; the self-hosted server
   numbers over Docker will be higher but have enormous headroom (62 ms vs
   a 2000 ms budget).
 - AC-605 measures the **backend half** of tap-to-audio (cache-hit
@@ -114,7 +114,7 @@ Caveats, stated plainly:
 
 ### 3.2 P0 performance, live-key criteria (AC-603, AC-604) — PENDING
 
-These require one live run on the homelab with real API keys (the sandbox
+These require one live run on the self-hosted server with real API keys (the sandbox
 has none and must never run live synthesis). Run and append the table:
 
 ```bash
@@ -123,8 +123,8 @@ python3 benchmark_tts.py --repeats 3     # edge-tts + Gemini, it + da
 
 | AC | Criterion | Budget | Result |
 |---|---|---|---|
-| AC-603 | edge-tts synthesis < 2.0x realtime | < 2.0x | **PENDING homelab run** |
-| AC-604 | Gemini synthesis < 1.5x realtime | < 1.5x | **PENDING homelab run** |
+| AC-603 | edge-tts synthesis < 2.0x realtime | < 2.0x | **PENDING self-hosted run** |
+| AC-604 | Gemini synthesis < 1.5x realtime | < 1.5x | **PENDING self-hosted run** |
 
 Mind the Gemini free-tier quota (~10 requests/day): `--repeats 3` with the
 default voices stays within it; resume interrupted runs rather than
@@ -143,7 +143,7 @@ Frontend coverage: unmeasured (no Node.js in the sandbox).
   also green in CI on main.
 - `ruff check .`: clean.
 - Vitest suite (55 cases): written, **never executed** — run on the
-  homelab (`cd frontend && npm test && npm run check`).
+  the self-hosted server (`cd frontend && npm test && npm run check`).
 
 ### 3.5 E2E coverage (AC-905)
 
@@ -158,11 +158,11 @@ dropped; see §5.
 1. Frontend Vitest suite — never executed anywhere (no Node.js in the
    cloud sandbox; CI runs the pytest suites only).
 2. Offline banner — manual procedure in §1.2, no automated test.
-3. AC-603/AC-604 live benchmark — pending homelab run (§3.2).
+3. AC-603/AC-604 live benchmark — pending self-hosted run (§3.2).
 4. AC-606/AC-607 memory/CPU profiling — no harness exists.
 5. AC-206 highlight-sync delay (<100 ms) — needs a real browser with
    audio; manual procedure in §1.2.
-6. Docker homelab smoke test — procedure in §1.2.
+6. Docker self-hosted smoke test — procedure in §1.2.
 
 ## 5. E2E (Playwright) decision
 
@@ -181,12 +181,12 @@ started, and the decision is to **drop them for v1**, recorded in
 - Playwright (+ browser binaries) is a heavy dependency; AGENTS.md prefers
   dependency-light choices.
 
-If the owner wants browser E2E later, the homelab can add it: Node.js +
+If the owner wants browser E2E later, the self-hosted deployment can add it: Node.js +
 `@playwright/test`, a compose profile that serves the built frontend with
 the mock engine registered, and ~10 journey specs mirroring §1.2's manual
 list.
 
 ---
 
-*Document status: delivered; AC-603/AC-604 results and the homelab manual
+*Document status: delivered; AC-603/AC-604 results and the self-hosted manual
 items remain open and are tracked in the PR handoff for issue #19.*

@@ -72,6 +72,11 @@ exact: measured per-boundary error is in
 `out/voice_tests/reqeff-measurements.json` (the `alignment` key);
 per-line requests have exact offsets by construction.
 
+`--preset` (issue #26) is the one-flag form of this choice:
+`quality` = `--lines-per-request 1` (per-line), `balanced` = 10 (the
+recommendation below), `fast` = 20 (aggressive batching). The expansion
+is printed in the run log; an explicit `--lines-per-request` wins.
+
 ## Recommendation
 
 `--lines-per-request 10` for the scheduled ch1-3 run:

@@ -44,6 +44,9 @@ Usage:
   python3 gemini_readaloud.py --epub book.epub --chapter 3 \
       --daily-requests 40 --output out/ch1.epub
 
+  python3 gemini_readaloud.py --epub book.epub --chapter 3 \
+      --preset balanced --output out/ch1.epub
+
 Voice (owner decision, 2026-10-07): single voice Rami on
 gemini-3.8-flash-lite-tts. --single VOICE changes the single voice;
 --cast switches to the role cast (narration Kore, male dialogue Rami,
@@ -644,6 +647,7 @@ async def process_chapter(client, args, idx, work_dir, eng,
                      for _s, _g, text_line, voice, _vn in b]
             paths = await synth_batch(eng, turns, cache_dir, args.pace)
             seg_files.extend(paths)
+
             voices = "/".join(sorted({v for v, _t in turns}))
             print(f"    batch {bi + 1:02d}/{len(batches)} "
                   f"lines {first:03d}-{first + len(b) - 1:03d} "
@@ -693,6 +697,45 @@ def run_generation(run, on_finish=None):
     finally:
         if on_finish:
             on_finish()
+
+
+# Approach presets (issue #26): one flag that expands to the underlying
+# --lines-per-request. Values are the lines-per-request each preset
+# means; see docs/REQUEST_EFFICIENCY.md for the measured tradeoffs.
+PRESETS = {
+    # Per-line box method: best prosody (each line a fresh, self-contained
+    # delivery), exact SMIL offsets, one request per line — the slowest
+    # against the per-day request quota.
+    "quality": 1,
+    # The measured recommendation: half the 100/day budget for a 513-line
+    # run, alignment error measured acceptable (docs/REQUEST_EFFICIENCY.md).
+    "balanced": 10,
+    # Aggressive batching: fewest requests; the most exposure to batch
+    # alignment drift and the read timeout on long batches.
+    "fast": 20,
+}
+
+
+def apply_preset(args):
+    """Expand --preset into the batching knobs (issue #26).
+
+    An explicit --lines-per-request wins over the preset's value.
+    Returns the expansion line to print in the run log, or None when
+    no preset was given. Without a preset nothing is touched: the
+    default stays the owner's --daily-requests auto-sizing (2026-10-07,
+    issue #25) — lines_per_request None lets plan_batch_chars size
+    requests from the daily budget.
+    """
+    if args.preset is None:
+        return None
+    if args.lines_per_request is None:
+        args.lines_per_request = PRESETS[args.preset]
+    if args.preset == "quality":
+        # 1 line/request is indistinguishable from auto-sizing to the
+        # batching logic (a falsy lines_per_request falls through to
+        # plan_batch_chars), so the box method needs the budget off.
+        args.daily_requests = 0
+    return f"preset: {args.preset} -> --lines-per-request {args.lines_per_request}"
 
 
 def main():
@@ -745,12 +788,22 @@ def main():
     parser.add_argument("--max-request-chars", type=int, default=2000,
                         help="Per-request character cap for "
                              "--daily-requests sizing (default %(default)s)")
+
+    parser.add_argument("--preset", choices=sorted(PRESETS), default=None,
+                        help="Approach preset (issue #26): expands to "
+                             "--lines-per-request (quality=1 box method, "
+                             "balanced=10, fast=20); an explicit "
+                             "--lines-per-request wins")
     parser.add_argument("--quota-ledger",
                         default=str(SCRIPT_DIR / "out" / "quota_ledger.json"),
                         help="Quota ledger this run's requests/tokens are "
                              "appended to (issue #25)")
     parser.add_argument("--list-chapters", action="store_true")
     args = parser.parse_args()
+
+    expansion = apply_preset(args)
+    if expansion:
+        print(expansion, flush=True)
 
     if not args.epub:
         print("ERROR: --epub is required")

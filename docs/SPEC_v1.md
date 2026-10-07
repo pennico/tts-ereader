@@ -310,7 +310,7 @@ of milestone M4 (docs/ARCHITECTURE_v1.md §4.4), not an artifact of this spec.
 | ID | Criteria | Priority | Verification Method |
 |---|---|---|---|
 | AC-701 | Local-first: works without internet (after initial load) | P0 | Disable network, verify functionality |
-| AC-702 | Docker deployment: single container for homelab | P0 | Docker build + run test |
+| AC-702 | Docker deployment: single container for self-hosting | P0 | Docker build + run test |
 | AC-703 | Responsive design: mobile-friendly | P0 | Mobile browser test |
 | AC-704 | Desktop-first: optimized for desktop experience | P0 | Desktop browser test |
 | AC-705 | Audio caching: synthesized audio stored for offline playback | P1 | Synthesize, go offline, verify playback |

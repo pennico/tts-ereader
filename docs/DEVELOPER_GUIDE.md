@@ -92,7 +92,7 @@ by `backend/tests/unit/test_benchmark.py` against the mock engine.
 
 See `docs/DEPLOYMENT.md`. The image is a multi-stage build (frontend bundle
 → `python:3.11-slim` + ffmpeg); `docker compose up -d --build` is the
-homelab runbook. Note the runtime image includes `shared/` — the prepare
+self-hosting runbook. Note the runtime image includes `shared/` — the prepare
 endpoints import `shared.text_preparation` at runtime.
 
 ## Conventions
