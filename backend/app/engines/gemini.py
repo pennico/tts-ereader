@@ -84,6 +84,12 @@ class GeminiTTSEngine(TTSEngine):
         self._api_key = api_key
         self._client = client
         self.retry_delays = tuple(retry_delays)
+        # Request/token instrumentation (issue #25): every HTTP request
+        # consumes the per-model daily request quota, and usageMetadata
+        # carries the token accounting. Callers read these after a run
+        # and persist them in the quota ledger.
+        self.request_count = 0
+        self.token_count = 0
 
     @property
     def name(self) -> str:
@@ -117,6 +123,7 @@ class GeminiTTSEngine(TTSEngine):
         finally:
             if self._client is None:
                 await client.aclose()
+        self.request_count += 1  # sent and answered: quota consumed
         if resp.status_code != 200:
             # 800 chars: a 429 body must include the quota metric name
             # (e.g. GenerateRequestsPerDayPerProjectPerModel) so callers
@@ -133,22 +140,27 @@ class GeminiTTSEngine(TTSEngine):
             for name, gender, _desc in PREBUILT_VOICES
         ]
 
-    async def synthesize(
-        self,
-        text: str,
-        voice: str,
-        rate: float = 1.0,
-        pitch: float = 0.0,
-    ) -> SynthesisResult:
-        payload = {
-            "contents": [{"parts": [{"text": f"{self.style} {text}"}]}],
-            "generationConfig": {
-                "responseModalities": ["AUDIO"],
-                "speechConfig": {
-                    "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": voice}}
-                },
-            },
+    def _record_usage(self, data: dict) -> dict | None:
+        """Accumulate usageMetadata tokens; return the per-request usage."""
+        u = data.get("usageMetadata")
+        if not isinstance(u, dict):
+            return None
+        total = u.get("totalTokenCount")
+        if not isinstance(total, int):
+            total = (u.get("promptTokenCount") or 0) + (u.get("candidatesTokenCount") or 0)
+        self.token_count += total
+        return {
+            "prompt": u.get("promptTokenCount"),
+            "candidates": u.get("candidatesTokenCount"),
+            "total": total,
         }
+
+    async def _generate_audio(self, payload: dict) -> tuple[bytes, str, dict | None]:
+        """POST the payload, retry malformed responses, parse the audio.
+
+        Returns (pcm, mimeType, usage). Raises EngineError on API errors
+        (callers inspect the message for 429s and the recitation filter).
+        """
         attempts = len(self.retry_delays) + 1
         for attempt in range(attempts):
             data = await self._post(payload)
@@ -156,7 +168,7 @@ class GeminiTTSEngine(TTSEngine):
                 inline = data["candidates"][0]["content"]["parts"][0]["inlineData"]
                 mime = inline.get("mimeType", "")
                 pcm = base64.b64decode(inline["data"])
-                break
+                return pcm, mime, self._record_usage(data)
             except (KeyError, IndexError, TypeError, ValueError) as e:
                 shape = _response_shape(data)
                 logger.warning(
@@ -173,6 +185,24 @@ class GeminiTTSEngine(TTSEngine):
                     ) from e
                 await asyncio.sleep(self.retry_delays[attempt])
 
+    async def synthesize(
+        self,
+        text: str,
+        voice: str,
+        rate: float = 1.0,
+        pitch: float = 0.0,
+    ) -> SynthesisResult:
+        payload = {
+            "contents": [{"parts": [{"text": f"{self.style} {text}" if self.style else text}]}],
+            "generationConfig": {
+                "responseModalities": ["AUDIO"],
+                "speechConfig": {
+                    "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": voice}}
+                },
+            },
+        }
+        pcm, mime, usage = await self._generate_audio(payload)
+
         match = re.search(r"rate=(\d+)", mime)
         sample_rate = int(match.group(1)) if match else 24000
         wav = pcm_to_wav(pcm, sample_rate)
@@ -183,4 +213,74 @@ class GeminiTTSEngine(TTSEngine):
             duration_ms=duration_ms,
             format="wav",
             word_boundaries=None,
+            usage=usage,
+        )
+
+    async def synthesize_multi(
+        self,
+        turns: list[tuple[str, str]],
+        style: str | None = None,
+    ) -> SynthesisResult:
+        """One request for several lines (issue #25).
+
+        turns: [(voice, text)] in reading order. One voice: a plain
+        single-voice request with the lines as paragraphs. Two voices: a
+        multi-speaker request — each voice becomes a speaker label
+        ("Rami: <line>") and the model reads each line in the labeled
+        speaker's voice without speaking the labels. More than two
+        voices is rejected locally: the API requires exactly 2
+        speaker_voice_configs, so the caller splits the batch.
+        """
+        voices: list[str] = []
+        for voice, _text in turns:
+            if voice not in voices:
+                voices.append(voice)
+        if len(voices) > 2:
+            raise EngineError(
+                "Gemini multi-speaker requests take at most 2 voices "
+                f"(got {len(voices)}): split the batch so each request "
+                "has at most 2 distinct voices")
+        style = self.style if style is None else style
+        if len(voices) == 1:
+            text = "\n\n".join(t for _v, t in turns)
+            speech_config: dict = {
+                "voiceConfig": {
+                    "prebuiltVoiceConfig": {"voiceName": voices[0]}
+                }
+            }
+        else:
+            text = "\n\n".join(f"{v}: {t}" for v, t in turns)
+            speech_config = {
+                "multiSpeakerVoiceConfig": {"speakerVoiceConfigs": [
+                    {
+                        "speaker": v,
+                        "voiceConfig": {
+                            "prebuiltVoiceConfig": {"voiceName": v}
+                        },
+                    }
+                    for v in voices
+                ]}
+            }
+        payload = {
+            "contents": [{"parts": [
+                {"text": f"{style} {text}" if style else text}
+            ]}],
+            "generationConfig": {
+                "responseModalities": ["AUDIO"],
+                "speechConfig": speech_config,
+            },
+        }
+        pcm, mime, usage = await self._generate_audio(payload)
+
+        match = re.search(r"rate=(\d+)", mime)
+        sample_rate = int(match.group(1)) if match else 24000
+        wav = pcm_to_wav(pcm, sample_rate)
+        duration_ms = len(pcm) / (sample_rate * 2) * 1000.0  # 16-bit mono
+        return SynthesisResult(
+            audio=wav,
+            sample_rate=sample_rate,
+            duration_ms=duration_ms,
+            format="wav",
+            word_boundaries=None,
+            usage=usage,
         )
