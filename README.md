@@ -178,10 +178,47 @@ runs are resumable across days (issue #17):
   the API's own "retry in ..." hint and exits with code **75**
   (`EX_TEMPFAIL`), so wrapper jobs can tell "re-run after the reset to
   resume" apart from a real failure (issue #21).
+- **Request-efficient mode** (issue #25; owner configuration
+  2026-10-07): lines are batched into ONE Gemini request per batch —
+  the blocking quota is the per-day REQUEST count (100/day on the 3.8
+  TTS models), not tokens, and one request per line spends the whole
+  bucket on a single chapter. **Default sizing**: the whole required
+  text is spread over `--daily-requests 90` requests — each request
+  carries total_chars/90 characters (capped by
+  `--max-request-chars 2000`) — so a full read fits one day's quota
+  with the remainder as margin for ad-hoc daily tests.
+  `--lines-per-request N` overrides the sizing with fixed batches;
+  `--daily-requests 0` restores the original per-line box method.
+  Per-line voice casting is kept (2-voice batches go out as labeled
+  multi-speaker conversations — the API requires exactly 2 speaker
+  configs, so batches spanning 3 voices are split; 1-voice batches
+  go out as plain multi-paragraph requests). The batch's single take
+  is split back into per-line segments at silence gaps, so the SMIL
+  offsets stay per-line; a batch that cannot be aligned confidently
+  (or hits the recitation filter) falls back to per-line synthesis —
+  a few extra requests beat misaligned highlighting. Batches already
+  fully cached per-line from earlier runs are stitched from the
+  per-line cache without a new request.
+- **Quota ledger** (issue #25): every run appends its measured
+  request/token counts (from the API responses' `usageMetadata`) to
+  `out/quota_ledger.json` — on success, quota abort, and failure
+  alike — and prints the day's total for the model. Wrappers read the
+  ledger (`shared/quota_ledger.py`) to report spend in notifications.
+  Measured comparison of per-line vs batched synthesis (requests,
+  tokens, wall time, alignment error):
+  `docs/REQUEST_EFFICIENCY.md` — raw numbers in
+  `out/archive/reqeff-measurements.json` (local run artifacts, not
+  committed; the distinct audio versions live in `out/archive/`).
 
 ```bash
-python3 gemini_readaloud.py --epub "book.epub" --chapter 3 --slice 1200 \
-    --single Kore --pace 20 --output out/slice.epub
+# Owner defaults: single voice Rami, gemini-3.8-flash-lite-tts,
+# requests auto-sized to the 90/day reading budget
+python3 gemini_readaloud.py --epub "book.epub" --chapter 3 \
+    --pace 20 --output out/ch1.epub
+
+# Role cast instead of the single voice
+python3 gemini_readaloud.py --epub "book.epub" --chapter 3 \
+    --cast --pace 20 --output out/ch1.epub
 ```
 
 A slice larger than the daily quota allows (observed 100 requests/day)
