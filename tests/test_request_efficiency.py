@@ -509,3 +509,100 @@ async def test_process_chapter_batched_counts_requests_and_keeps_offsets(tmp_pat
     eng2 = _FakeEngine([])
     await gr.process_chapter(_RaisingClient(), args, 0, work_dir, eng2)
     assert eng2.request_count == 0
+
+
+def _seg(text):
+    # (speaker, gender, text, voice, voice_name)
+    return (None, None, text, "Rami", "Rami")
+
+
+def test_plan_batch_chars_spreads_text_over_daily_budget():
+    # Owner policy (2026-10-07): total_chars / 90 per request, so the
+    # whole required text fits the 90-request daily reading budget.
+    args = types.SimpleNamespace(lines_per_request=None, daily_requests=90,
+                                 max_request_chars=2000)
+    segs = {0: [_seg("x" * 40000)]}
+    assert gr.plan_batch_chars(args, segs) == 445  # ceil(40000/90)
+    # multiple chapters count together
+    segs = {0: [_seg("x" * 20000)], 1: [_seg("y" * 20000)]}
+    assert gr.plan_batch_chars(args, segs) == 445
+
+
+def test_plan_batch_chars_caps_and_disables():
+    args = types.SimpleNamespace(lines_per_request=None, daily_requests=90,
+                                 max_request_chars=200)
+    segs = {0: [_seg("x" * 40000)]}
+    assert gr.plan_batch_chars(args, segs) == 200  # cap bites
+    # --lines-per-request overrides the auto-sizing
+    args = types.SimpleNamespace(lines_per_request=10, daily_requests=90,
+                                max_request_chars=2000)
+    assert gr.plan_batch_chars(args, segs) is None
+    # --daily-requests 0 = the per-line box method
+    args = types.SimpleNamespace(lines_per_request=None, daily_requests=0,
+                                 max_request_chars=2000)
+    assert gr.plan_batch_chars(args, segs) is None
+    # nothing to read
+    args = types.SimpleNamespace(lines_per_request=None, daily_requests=90,
+                                 max_request_chars=2000)
+    assert gr.plan_batch_chars(args, {0: []}) is None
+
+
+def test_pack_batches_by_chars_groups_lines():
+    segs = [_seg("a" * 100), _seg("b" * 100), _seg("c" * 100),
+            _seg("d" * 100)]
+    batches = gr.pack_batches_by_chars(segs, 250)
+    assert [len(b) for b in batches] == [2, 2]
+    # a single line longer than the target becomes its own batch
+    segs = [_seg("a" * 100), _seg("b" * 500), _seg("c" * 100)]
+    batches = gr.pack_batches_by_chars(segs, 250)
+    assert [len(b) for b in batches] == [1, 1, 1]
+    # empty input
+    assert gr.pack_batches_by_chars([], 250) == []
+
+
+@pytest.mark.asyncio
+async def test_process_chapter_auto_batched_fits_daily_budget(tmp_path):
+    # 11 lines of ~36 chars (~400 total): a 3-request budget sizes
+    # batches at ceil(total/3) chars, so lines pack into ~4 char-sized
+    # batches instead of one request per line.
+    epub = _fixture_epub(tmp_path)
+    args = _chapter_args(tmp_path, epub, lines_per_request=None)
+    work_dir = tmp_path / "work"
+
+    line = "Riga numero {} del capitolo di prova."
+    prepared = "\n\n".join(line.format(i) for i in range(11))
+    from epub_readaloud import slice_text, source_metadata, strip_title_leak
+    from poc_reader import extract_epub_chapter
+    book_title, _ = source_metadata(args.epub)
+    text = strip_title_leak(
+        slice_text(extract_epub_chapter(args.epub, 0), args.slice), book_title)
+    fingerprint = "|".join(str(x) for x in
+                          (Path(args.epub).resolve(), 0, args.slice,
+                           args.max_chars, args.model_llm,
+                           hashlib.sha1(text.encode()).hexdigest()))
+    ch_dir = work_dir / "ch000"
+    ch_dir.mkdir(parents=True)
+    (ch_dir / "prepared_text.txt").write_text(prepared)
+    (ch_dir / "prepared_meta.txt").write_text(fingerprint)
+
+    segments = gr.prepare_chapter(None, args, 0, work_dir)
+    assert len(segments) == 11
+    total = sum(len(s[2]) for s in segments)
+    batch_chars = max(1, -(-total // 3))
+    batches = gr.pack_batches_by_chars(segments, batch_chars)
+    assert 1 < len(batches) < 11  # batched, not per-line
+
+    def batch_wav(turns):
+        durs = [0.4 + 0.02 * len(t) for _v, t in turns]
+        return _wav(_batch_pcm(durs))
+
+    responses = [batch_wav([(seg[3], seg[2]) for seg in b])
+                 for b in batches]
+    eng = _FakeEngine(responses)
+
+    result = await gr.process_chapter(None, args, 0, work_dir, eng,
+                                      segments=segments,
+                                      batch_chars=batch_chars)
+    assert eng.request_count == len(batches)
+    assert result["smil"].count("<par") == 11
+    assert result["xhtml"].count("<p") == 11

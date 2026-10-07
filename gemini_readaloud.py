@@ -6,13 +6,21 @@ SMIL-synced paragraph per line), but synthesis goes through the Gemini
 TTS engine one line at a time — the "box" method validated in
 out/voice_tests: short requests, no style prefix, per-line voices.
 
-The blocking quota is the per-day REQUEST count (100/day on
-gemini-3.8-flash-tts), not tokens, so --lines-per-request N (issue #25)
-batches up to N prepared lines into ONE multi-speaker request while
-keeping per-line voice casting, per-line SMIL offsets (the batch take is
-split back into per-line segments at silence gaps), per-batch cache
-keys, and the per-line fallbacks (recitation-filter sentence-splitting,
-exit-75 quota abort). Default 1 = the original per-line behavior.
+The blocking quota is the per-day REQUEST count (100/day on the 3.8
+TTS models), not tokens, so lines are batched into multi-speaker
+requests while keeping per-line voice casting, per-line SMIL offsets
+(the batch take is split back into per-line segments at silence gaps),
+per-batch cache keys, and the per-line fallbacks (recitation-filter
+sentence-splitting, exit-75 quota abort).
+
+Batch sizing (owner decision, 2026-10-07): by default the WHOLE
+required text is spread over --daily-requests 90 requests — each
+request carries total_chars/90 characters (capped by
+--max-request-chars) — so a full read fits one day's 100-request
+quota with the remainder as margin for ad-hoc daily tests.
+--lines-per-request N overrides the sizing with fixed batches;
+--daily-requests 0 restores the original one-request-per-line box
+method.
 
 Every line's audio is cleaned (shared/audio_clean.py: the 3.8 end-of-
 response noise burst and start click are trimmed, edges faded) and
@@ -31,14 +39,15 @@ failure alike.
 
 Usage:
   python3 gemini_readaloud.py --epub book.epub --list-chapters
-  python3 gemini_readaloud.py --epub book.epub --chapter 3 --slice 1200 \
-      --single Kore --output out/slice.epub
+  python3 gemini_readaloud.py --epub book.epub --chapter 3 --output out/ch1.epub
   python3 gemini_readaloud.py --epub book.epub --all --output out/book.epub
   python3 gemini_readaloud.py --epub book.epub --chapter 3 \
-      --lines-per-request 10 --output out/ch1.epub
+      --daily-requests 40 --output out/ch1.epub
 
-Cast (default): narration Kore, male dialogue Rami, female dialogue
-Leda. --single VOICE reads everything with one voice.
+Voice (owner decision, 2026-10-07): single voice Rami on
+gemini-3.8-flash-lite-tts. --single VOICE changes the single voice;
+--cast switches to the role cast (narration Kore, male dialogue Rami,
+female dialogue Leda).
 
 Requires: MISTRAL_API_KEY + GEMINI_API_KEY (.env), pydub + ffmpeg (mp3).
 NOTE: Apple Books ignores Media Overlays; test in Thorium Reader.
@@ -104,8 +113,10 @@ def load_env():
 
 
 def cast_voice(speaker, gender, args):
-    """Box-method cast: one Gemini voice per role."""
-    if args.single:
+    """Box-method cast: one Gemini voice per role. The owner's default
+    (2026-10-07) is a single voice for everything; --cast restores the
+    narration/dialogue role cast."""
+    if getattr(args, "single", None) and not getattr(args, "cast", False):
         return args.single
     if speaker is None:
         return args.narrator
@@ -541,43 +552,103 @@ def to_mp3(wav_bytes):
     return out.getvalue()
 
 
-async def process_chapter(client, args, idx, work_dir, eng):
+def plan_batch_chars(args, chapter_segments):
+    """Owner request-split policy (2026-10-07): spread the whole
+    required text over the daily request budget — default 90 of the
+    observed 100/day free-tier limit, keeping the remainder as margin
+    for ad-hoc daily tests — so each request carries total_chars /
+    budget characters and a full read takes at most `budget` requests.
+
+    Returns the per-request character target, or None when batching is
+    not wanted (--lines-per-request set, or --daily-requests 0 = the
+    per-line box method). The target is capped by --max-request-chars;
+    when the cap bites, the run needs more than `budget` requests and
+    resumes across days via the cache + exit-75 quota abort.
+    """
+    if getattr(args, "lines_per_request", None):
+        return None
+    budget = getattr(args, "daily_requests", 0) or 0
+    if budget <= 0:
+        return None
+    total = sum(len(t) for segs in chapter_segments.values()
+                for _s, _g, t, _v, _vn in segs)
+    if not total:
+        return None
+    per_request = -(-total // budget)  # ceil(total / budget)
+    return max(1, min(per_request, args.max_request_chars))
+
+
+def pack_batches_by_chars(segments, batch_chars):
+    """Group consecutive lines into batches of at most batch_chars
+    characters (a single longer line becomes its own batch)."""
+    batches, current, size = [], [], 0
+    for seg in segments:
+        line_len = len(seg[2]) + 1  # +1: the newline joining batch lines
+        if current and size + line_len > batch_chars:
+            batches.append(current)
+            current, size = [], 0
+        current.append(seg)
+        size += line_len
+    if current:
+        batches.append(current)
+    return batches
+
+
+def prepare_chapter(client, args, idx, work_dir):
+    """Prepare one chapter's segments: extract, LLM-prepare (cached),
+    parse lines, cast voices. Runs before the first Gemini request so
+    the batch size can be computed over the whole required text."""
+    ch_id = f"ch{idx:03d}"
+    ch_dir = work_dir / ch_id
+    ch_dir.mkdir(parents=True, exist_ok=True)
+    book_title, _creator = source_metadata(args.epub)
+    text = strip_title_leak(
+        slice_text(extract_epub_chapter(args.epub, idx), args.slice), book_title)
+    prepared = prepared_chapter_text(client, args, idx, ch_dir, text)
+    lines = split_long_narration(parse_lines(prepared))
+    return [(s, g, t, cast_voice(s, g, args), cast_voice(s, g, args))
+            for s, g, t in lines]
+
+
+async def process_chapter(client, args, idx, work_dir, eng,
+                          segments=None, batch_chars=None):
     ch_id = f"ch{idx:03d}"
     ch_dir = work_dir / ch_id
     cache_dir = work_dir / "gemini_segments" / args.model.replace(".", "_")
     ch_dir.mkdir(parents=True, exist_ok=True)
     cache_dir.mkdir(parents=True, exist_ok=True)
 
-    book_title, _creator = source_metadata(args.epub)
-    text = strip_title_leak(
-        slice_text(extract_epub_chapter(args.epub, idx), args.slice), book_title)
-    prepared = prepared_chapter_text(client, args, idx, ch_dir, text)
-
-    lines = split_long_narration(parse_lines(prepared))
-    segments = [(s, g, t, cast_voice(s, g, args), cast_voice(s, g, args))
-                for s, g, t in lines]
+    if segments is None:
+        segments = prepare_chapter(client, args, idx, work_dir)
     cast = {}
     for _s, _g, _t, v, _vn in segments:
         cast[v] = cast.get(v, 0) + 1
     print(f"  {len(segments)} lines: " + ", ".join(f"{k} x{v}" for k, v in cast.items()),
           flush=True)
 
-    npr = max(1, getattr(args, "lines_per_request", 1) or 1)
+    npr = getattr(args, "lines_per_request", None) or 0
     if npr > 1:
-        print(f"  synthesizing with Gemini (batched, {npr} lines/request)...",
-              flush=True)
-        seg_files = []
         batches = [segments[i:i + npr] for i in range(0, len(segments), npr)]
+        mode = f"fixed {npr} lines/request"
+    elif batch_chars:
+        batches = pack_batches_by_chars(segments, batch_chars)
+        mode = f"auto-sized, <= {batch_chars} chars/request"
+    else:
+        batches = None
+    if batches is not None:
+        print(f"  synthesizing with Gemini (batched, {mode})...", flush=True)
+        seg_files = []
+        first = 0
         for bi, b in enumerate(batches):
             turns = [(voice, text_line)
                      for _s, _g, text_line, voice, _vn in b]
             paths = await synth_batch(eng, turns, cache_dir, args.pace)
             seg_files.extend(paths)
-            first = bi * npr
             voices = "/".join(sorted({v for v, _t in turns}))
             print(f"    batch {bi + 1:02d}/{len(batches)} "
                   f"lines {first:03d}-{first + len(b) - 1:03d} "
                   f"[{voices}] done", flush=True)
+            first += len(b)
     else:
         print("  synthesizing with Gemini (box method)...", flush=True)
         seg_files = []
@@ -633,15 +704,24 @@ def main():
     parser.add_argument("--slice", type=int, help="Max source chars per chapter (test mode)")
     parser.add_argument("--output", help="Output EPUB path")
     parser.add_argument("--work-dir", default="out/gemini_readaloud_work")
-    parser.add_argument("--model", default="gemini-3.8-flash-tts",
-                        help="Gemini TTS model (default %(default)s)")
+    parser.add_argument("--model", default="gemini-3.8-flash-lite-tts",
+                        help="Gemini TTS model (default %(default)s; owner "
+                             "decision 2026-10-07)")
     parser.add_argument("--model-llm", default="mistral-large-latest",
                         help="Mistral model for text preparation")
     parser.add_argument("--max-chars", type=int, default=4000)
-    parser.add_argument("--narrator", default="Kore", help="Narration voice")
-    parser.add_argument("--voice-m", default="Rami", help="Male dialogue voice")
-    parser.add_argument("--voice-f", default="Leda", help="Female dialogue voice")
-    parser.add_argument("--single", help="One voice for everything (overrides cast)")
+    parser.add_argument("--narrator", default="Kore", help="Narration voice "
+                        "(--cast mode only)")
+    parser.add_argument("--voice-m", default="Rami", help="Male dialogue "
+                        "voice (--cast mode only)")
+    parser.add_argument("--voice-f", default="Leda", help="Female dialogue "
+                        "voice (--cast mode only)")
+    parser.add_argument("--single", default="Rami",
+                        help="One voice for everything (default %(default)s; "
+                             "owner decision 2026-10-07)")
+    parser.add_argument("--cast", action="store_true",
+                        help="Use the narration/dialogue cast instead of "
+                             "the single voice")
     parser.add_argument("--pace", type=float, default=7.0,
                         help="Seconds between Gemini requests (free-tier pacing)")
     parser.add_argument("--gap-ms", type=int, default=250,
@@ -650,11 +730,21 @@ def main():
                         help="Regenerate the prepared text even if cached "
                              "(cached segments for old lines are not "
                              "deleted)")
-    parser.add_argument("--lines-per-request", type=int, default=1,
-                        help="Batch N prepared lines into one Gemini request "
-                             "(request-efficient mode, issue #25; default "
-                             "%(default)s = one request per line, the box "
-                             "method)")
+    parser.add_argument("--lines-per-request", type=int, default=None,
+                        help="Batch exactly N prepared lines into one "
+                             "Gemini request; overrides --daily-requests "
+                             "auto-sizing")
+    parser.add_argument("--daily-requests", type=int, default=90,
+                        help="Auto-size requests so the whole required "
+                             "text takes at most N requests: each carries "
+                             "total_chars/N chars, capped by "
+                             "--max-request-chars (default %(default)s of "
+                             "the observed 100/day free-tier limit, "
+                             "keeping the remainder as margin for ad-hoc "
+                             "daily tests; 0 = one request per line)")
+    parser.add_argument("--max-request-chars", type=int, default=2000,
+                        help="Per-request character cap for "
+                             "--daily-requests sizing (default %(default)s)")
     parser.add_argument("--quota-ledger",
                         default=str(SCRIPT_DIR / "out" / "quota_ledger.json"),
                         help="Quota ledger this run's requests/tokens are "
@@ -716,9 +806,27 @@ def main():
         async with httpx.AsyncClient(timeout=120.0) as hc:
             eng = GeminiTTSEngine(model=args.model, style="", client=hc)
             eng_holder["eng"] = eng
+            # Pass 1: prepare every chapter (cached) BEFORE the first
+            # Gemini request, so the batch size covers the whole
+            # required text (owner policy: total_chars / daily budget).
+            chapter_segments = {}
+            for idx in indices:
+                chapter_segments[idx] = prepare_chapter(
+                    client, args, idx, work_dir)
+            batch_chars = plan_batch_chars(args, chapter_segments)
+            if batch_chars:
+                total = sum(len(t) for segs in chapter_segments.values()
+                            for _s, _g, t, _v, _vn in segs)
+                est = -(-total // batch_chars)
+                print(f"  request plan: {total} chars -> ~{est} requests "
+                      f"(budget {args.daily_requests}/day, "
+                      f"cap {args.max_request_chars} chars/request)",
+                      flush=True)
             for idx in indices:
                 print(f"\n=== Chapter {idx} ===", flush=True)
-                result = await process_chapter(client, args, idx, work_dir, eng)
+                result = await process_chapter(client, args, idx, work_dir,
+                                               eng, chapter_segments[idx],
+                                               batch_chars)
                 ch = result["ch_id"]
                 files[f"{ch}.xhtml"] = result["xhtml"]
                 files[f"{ch}.smil"] = result["smil"]

@@ -1,20 +1,18 @@
 #!/bin/bash
-# One-shot: request-efficient read-along EPUBs for chapters 1-3 of the
-# Saramago test book, Rami/Kore cast, --lines-per-request 10 (issue #25).
-# Idempotent/resumable: finished chapter EPUBs are skipped and cached
-# lines cost nothing, so re-runs never re-spend quota on work already
-# done. Self-removes from crontab on full success (see the delivering
-# PR's Handoff for the exact crontab lines).
+# One-shot: read-along EPUBs for chapters 1-3 of the Saramago test
+# book. Owner configuration (2026-10-07): single voice Rami on
+# gemini-3.8-flash-lite-tts, requests auto-sized so the whole required
+# text fits the 90-per-day reading budget (100/day free-tier limit
+# minus margin for ad-hoc tests). Idempotent/resumable: finished
+# chapter EPUBs are skipped and cached lines cost nothing, so re-runs
+# never re-spend quota on work already done.
 #
-# Model: gemini-3.8-flash-lite-tts — owner decision (issue #30 answer):
-# a different model with a different request quota than
-# gemini-3.8-flash-tts was chosen for the scheduled run. Override in
-# one line via the environment if the owner-side session is told
-# otherwise (TTS_CH13_MODEL=gemini-3.8-flash-tts).
+# Override via the environment if the owner-side session is told
+# otherwise (TTS_CH13_MODEL, TTS_CH13_DAILY_REQUESTS).
 set -u
 LOG=/home/nicola/tts-ch13-efficient.log
 MODEL="${TTS_CH13_MODEL:-gemini-3.8-flash-lite-tts}"
-LINES_PER_REQUEST="${TTS_CH13_LINES_PER_REQUEST:-10}"
+DAILY_REQUESTS="${TTS_CH13_DAILY_REQUESTS:-90}"
 
 notify() {
   docker exec -i agent-runner python3 - "$1" "$2" <<'PYEOF'
@@ -37,11 +35,11 @@ feedback() {
     /app/projects/pennico-ops/dispatcher/feedback.py "$@"
 }
 
-EPUB=/app/projects/tts-ereader/out/voice_tests/saramago.epub
+EPUB=/app/projects/tts-ereader/out/archive/saramago.epub
 OUTDIR=/app/projects/tts-ereader/out
 LEDGER=/app/projects/tts-ereader/out/quota_ledger.json
 
-echo "=== $(date) ch1-3 efficient run (model=$MODEL, lines-per-request=$LINES_PER_REQUEST) ===" >> "$LOG"
+echo "=== $(date) ch1-3 run (model=$MODEL, daily-requests=$DAILY_REQUESTS) ===" >> "$LOG"
 
 # Chapter indices 3,4,5 are the first three real chapters (0-2 = front matter)
 for ch in 3 4 5; do
@@ -53,9 +51,8 @@ for ch in 3 4 5; do
   fi
   docker exec agent-runner python3 /app/projects/tts-ereader/gemini_readaloud.py \
        --epub "$EPUB" --chapter "$ch" \
-       --narrator Rami --voice-m Rami --voice-f Kore \
        --model "$MODEL" --pace 20 \
-       --lines-per-request "$LINES_PER_REQUEST" \
+       --daily-requests "$DAILY_REQUESTS" \
        --work-dir /app/projects/tts-ereader/out/gemini_readaloud_work \
        --output "$OUT" >> "$LOG" 2>&1
   rc=$?
@@ -87,6 +84,6 @@ import quota_ledger
 t = quota_ledger.day_totals('${LEDGER}', model='${MODEL}')
 print('{} requests, {} tokens today'.format(t['requests'], t['tokens']))
 " 2>> "$LOG")
-notify "tts-ereader ch1-3 done" "Read-along EPUBs ch1-3 (Rami/Kore, ${MODEL}, ${LINES_PER_REQUEST} lines/request) ready: calibre-web (Tailscale :8452) and Nextcloud tts-ereader/. Spend: ${SPEND:-n/a (ledger)}."
+notify "tts-ereader ch1-3 done" "Read-along EPUBs ch1-3 (Rami, ${MODEL}, ${DAILY_REQUESTS} requests/day budget) ready: calibre-web (Tailscale :8452) and Nextcloud tts-ereader/. Spend: ${SPEND:-n/a (ledger)}."
 (crontab -l | grep -v tts-ch13-efficient-run) | crontab -
 echo "=== done, cron line self-removed ===" >> "$LOG"
