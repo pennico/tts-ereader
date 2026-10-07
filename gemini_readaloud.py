@@ -742,7 +742,10 @@ def main():
     parser = argparse.ArgumentParser(
         description="gemini_readaloud: read-along EPUB with Gemini TTS")
     parser.add_argument("--epub", help="Path to the source EPUB")
-    parser.add_argument("--chapter", type=int, help="Chapter index (see --list-chapters)")
+    parser.add_argument("--chapter",
+                        help="Chapter index (see --list-chapters); a comma "
+                             "list (e.g. 3,4,5) packs those chapters into "
+                             "one output EPUB")
     parser.add_argument("--all", action="store_true", help="Process all chapters")
     parser.add_argument("--slice", type=int, help="Max source chars per chapter (test mode)")
     parser.add_argument("--output", help="Output EPUB path")
@@ -818,10 +821,17 @@ def main():
     if args.all:
         indices = [i for i, _f, _s, _t in chapters]
     elif args.chapter is not None:
-        if args.chapter < 0 or args.chapter >= len(chapters):
-            print(f"ERROR: chapter index {args.chapter} out of range (0-{len(chapters) - 1})")
+        try:
+            indices = [int(c) for c in args.chapter.split(",") if c.strip()]
+        except ValueError:
+            print(f"ERROR: --chapter must be an index or comma list, "
+                  f"got {args.chapter!r}")
             sys.exit(1)
-        indices = [args.chapter]
+        for idx in indices:
+            if idx < 0 or idx >= len(chapters):
+                print(f"ERROR: chapter index {idx} out of range "
+                      f"(0-{len(chapters) - 1})")
+                sys.exit(1)
     else:
         print("ERROR: provide --chapter N, --all, or --list-chapters")
         sys.exit(1)
