@@ -17,9 +17,14 @@
 set -u
 cd "$(dirname "$0")"
 
+# APPROACH (owner decision, 2026-10-09): prepared = LLM repunctuation
+# (best for normal books); loyal = the author's text verbatim,
+# footnotes out, one request per paragraph/segment (box method, best
+# quality for authors whose rhythm IS the work, e.g. Saramago).
+APPROACH=${APPROACH:-prepared}
 EPUB=out/archive/saramago.epub
-WORK=out/gemini_readaloud_work
-OUT=out/readalong-saramago-full.epub
+WORK=out/readings/$APPROACH-gemini38/work
+OUT=out/readings/$APPROACH-gemini38/readalong-saramago-full.epub
 MODEL=gemini-3.8-flash-lite-tts
 BATCH_CHARS=400        # the 400-char method: near-zero recitation blocks
 DAILY_BUDGET=90       # of the observed 100/day; margin kept for ad-hoc tests
@@ -31,6 +36,10 @@ LOG=out/book-daily.log
 
 if ! grep -q -- "--batch-chars" gemini_readaloud.py 2>/dev/null; then
   echo "engine lacks the 400-char method: merge tts-ereader PR #41 first" >&2
+  exit 1
+fi
+if ! grep -q -- "--prepare-mode" gemini_readaloud.py 2>/dev/null; then
+  echo "engine lacks the loyal mode: merge the loyal-mode PR first" >&2
   exit 1
 fi
 
@@ -73,9 +82,17 @@ fi
 
 while [ "$next" -le "$LAST_CH" ] && [ "$remaining" -ge "$MIN_USEFUL" ]; do
   echo "=== $(date -u '+%Y-%m-%d %H:%M UTC') chapter $next, $remaining requests left today ===" | tee -a "$LOG"
+  if [ "$APPROACH" = "loyal" ]; then
+    # Loyal: one request per paragraph/segment (box method) — the
+    # owner's per-paragraph quality choice; --batch-chars 0 disables
+    # batching so each segment is its own request.
+    BATCH_ARGS="--batch-chars 0 --daily-requests 0"
+  else
+    BATCH_ARGS="--batch-chars $BATCH_CHARS"
+  fi
   python3 gemini_readaloud.py --epub "$EPUB" --chapter "$next" \
-      --single Rami --model "$MODEL" \
-      --batch-chars "$BATCH_CHARS" --max-requests "$remaining" \
+      --single Rami --model "$MODEL" --prepare-mode "$APPROACH" \
+      $BATCH_ARGS --max-requests "$remaining" \
       --growing --work-dir "$WORK" --output "$OUT" >> "$LOG" 2>&1
   rc=$?
   if [ "$rc" -eq 75 ]; then
