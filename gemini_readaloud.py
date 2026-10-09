@@ -114,7 +114,7 @@ from shared.text_preparation import (  # noqa: E402
     loyal_prepare,
     parse_lines,
     split_long_narration,
-)  # noqa: E402
+)
 
 RATE_DEFAULT = 24000  # Gemini TTS output sample rate
 
