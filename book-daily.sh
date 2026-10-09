@@ -5,9 +5,8 @@
 # re-synthesized (segment cache), one output file for the whole book.
 #
 # Trigger: the scheduled GitHub Action (.github/workflows/
-# book-daily.yml) files a `run`-labeled issue; the pennico-ops
-# dispatcher executes this script directly in the repo root (no LLM
-# session). The Action is DISABLED until the repository variable
+# book-daily.yml) files a `run`-labeled issue; the ops dispatcher
+# executes this script directly in the repo root (no LLM session). The Action is DISABLED until the repository variable
 # TTS_BOOK_DAILY is set to "enabled" — the owner arms it explicitly.
 #
 # Exit codes: 0 = a successful day (chapter(s) read, budget spent, or

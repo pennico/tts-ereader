@@ -1,7 +1,7 @@
 # One-shot loyal-mode sample (owner decision, 2026-10-09): the first
 # paragraphs of book chapter 1 read VERBATIM (Saramago's own rhythm,
 # footnotes out, one request per <=300-char piece). Files a `run`
-# issue; the pennico-ops dispatcher executes `bash loyal-sample.sh`
+# issue; the ops dispatcher executes `bash loyal-sample.sh`
 # in the repo clone inside the agent-runner container (no LLM
 # session) and the mp3 is published to Nextcloud out/listening.
 #
