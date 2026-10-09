@@ -658,3 +658,69 @@ async def test_process_chapter_auto_batched_fits_daily_budget(tmp_path):
     assert eng.request_count == len(batches)
     assert result["smil"].count("<par") == 11
     assert result["xhtml"].count("<p") == 11
+
+
+# ── the 400-char method and the per-run request cap (owner decision
+# ── 2026-10-09) ──────────────────────────────────────────────────────────
+
+
+def test_plan_batch_counts_batch_chars_sizes_by_text():
+    # --batch-chars N sizes by text, not by budget: ceil(chars/N)
+    # requests per chapter, whatever --daily-requests says.
+    args = types.SimpleNamespace(lines_per_request=None, batch_chars=400,
+                                 daily_requests=90, max_request_chars=2000)
+    # 100 lines x 100 chars = 10100 chars -> ceil(10100/400) = 26 batches
+    assert gr.plan_batch_counts(args, {0: _segs(100, 100)}) == {0: 26}
+    # the budget is ignored in batch-chars mode
+    args.daily_requests = 5
+    assert gr.plan_batch_counts(args, {0: _segs(100, 100)}) == {0: 26}
+    # a chapter cannot use more batches than it has lines
+    assert gr.plan_batch_counts(args, {0: _segs(3, 100)}) == {0: 1}
+    # multiple chapters are sized independently
+    segs = {0: _segs(10, 100), 1: _segs(20, 100)}
+    assert gr.plan_batch_counts(args, segs) == {0: 3, 1: 6}
+
+
+def test_pack_batches_by_count_400_char_method():
+    # With n = ceil(total/400) the batches flex around ~400 chars at
+    # line boundaries: near-zero recitation blocks, ~2x fewer requests
+    # than per-line.
+    segs = _segs(50, 80)  # 50 lines x 81 chars = 4050 chars
+    n = (4050 + 399) // 400  # 11
+    batches = gr.pack_batches_by_count(segs, n, 2000)
+    assert len(batches) == n
+    sizes = [sum(len(s[2]) + 1 for s in b) for b in batches]
+    assert max(sizes) <= 400 + 81  # one line of flex around the target
+    assert abs(sum(sizes) / len(sizes) - 4050 / n) < 81
+
+
+@pytest.mark.asyncio
+async def test_apply_request_budget_caps_at_the_planned_run_budget():
+    # --max-requests N: reaching the cap raises QuotaExhausted (the
+    # resumable exit-75 path) BEFORE the next request is spent, on
+    # both synthesize methods; below the cap requests go through.
+    class _Eng:
+        def __init__(self):
+            self.request_count = 0
+            self.calls = 0
+
+        async def synthesize(self, text, voice=None):
+            self.calls += 1
+            self.request_count += 1
+            return types.SimpleNamespace(audio=b"")
+
+        async def synthesize_multi(self, turns, style=""):
+            self.calls += 1
+            self.request_count += 1
+            return types.SimpleNamespace(audio=b"")
+
+    eng = _Eng()
+    gr._apply_request_budget(eng, 2)
+    await eng.synthesize("a", voice="Rami")
+    await eng.synthesize_multi([("Rami", "b")])
+    assert eng.calls == 2
+    with pytest.raises(gr.QuotaExhausted, match="budget reached"):
+        await eng.synthesize("c", voice="Rami")
+    with pytest.raises(gr.QuotaExhausted, match="budget reached"):
+        await eng.synthesize_multi([("Rami", "d")])
+    assert eng.calls == 2  # nothing was spent past the cap
