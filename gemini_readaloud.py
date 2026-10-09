@@ -24,6 +24,21 @@ requests regardless of where the line boundaries fall.
 --daily-requests 0 restores the original one-request-per-line box
 method.
 
+--batch-chars N (owner decision, 2026-10-09: the 400-char method)
+sizes batches by text instead of by budget — ceil(chars/N) requests
+of ~N characters per chapter, soft at line boundaries. ~400-char
+passages almost never trip the recitation filter, at ~2x fewer
+requests than the per-line method; --max-requests caps the run
+resumably (exit 75) so a day stops at the planned budget, not at
+the API's 100/day wall.
+
+--growing (owner decision, 2026-10-09) rebuilds the output EPUB from
+every completed chapter's persisted artifacts in the work dir, not
+just this run's selection: one growing file for the whole book —
+completed chapters are never re-synthesized, and a quota-abort
+partial is the book with everything read so far. --package-only
+rebuilds it with no synthesis at all.
+
 Every line's audio is cleaned (shared/audio_clean.py: the 3.8 end-of-
 response noise burst and start click are trimmed, edges faded) and
 cached under the work dir, so runs are resumable: re-running skips
@@ -63,6 +78,7 @@ import argparse
 import asyncio
 import hashlib
 import io
+import json
 import os
 import re
 import sys
@@ -229,6 +245,30 @@ async def _request_with_quota_retries(request, max_retries=5):
                 await asyncio.sleep(wait)
             else:
                 raise
+
+
+def _apply_request_budget(eng, cap):
+    """Hard cap on Gemini requests per run (owner decision, 2026-10-09:
+    the daily schedule must stop at the planned budget — margin is
+    kept for ad-hoc tests — not at the API's 100/day wall). Every
+    request site goes through the engine's two synthesize methods, so
+    guarding them covers lines, batches and fallbacks alike. Hitting
+    the cap raises QuotaExhausted: the same resumable exit-75 path as a
+    daily-quota 429, and cached segments make the next run resume
+    without re-spending anything.
+    """
+    for name in ("synthesize", "synthesize_multi"):
+        orig = getattr(eng, name)
+
+        async def guarded(*_a, _orig=orig, **_kw):
+            if eng.request_count >= cap:
+                raise QuotaExhausted(
+                    f"planned request budget reached ({cap} requests "
+                    "this run; resumable — re-run to continue, cached "
+                    "lines are not re-spent)")
+            return await _orig(*_a, **_kw)
+
+        setattr(eng, name, guarded)
 
 
 async def synth_line(eng, voice, text, cache_dir, pace, max_retries=5):
@@ -569,14 +609,22 @@ def plan_batch_counts(args, chapter_segments):
     than the budget and resumes across days via the cache + the
     exit-75 quota abort.
 
+    --batch-chars N (owner decision, 2026-10-09: the 400-char method)
+    overrides the budget sizing: each chapter is planned into
+    ceil(chars/N) requests of ~N characters — short enough that the
+    recitation filter almost never blocks, at ~2x fewer requests than
+    the per-line method — and the run stops at --max-requests instead,
+    resuming across days via the cache.
+
     Returns {chapter_idx: batch_count}, or None when batching is not
-    wanted (--lines-per-request set, or --daily-requests 0 = the
+    wanted (--lines-per-request set, or neither knob given = the
     per-line box method).
     """
     if getattr(args, "lines_per_request", None):
         return None
+    batch_chars = getattr(args, "batch_chars", 0) or 0
     budget = getattr(args, "daily_requests", 0) or 0
-    if budget <= 0:
+    if batch_chars <= 0 and budget <= 0:
         return None
     totals = {idx: sum(len(t) + 1 for _s, _g, t, _v, _vn in segs)
               for idx, segs in chapter_segments.items()}
@@ -584,6 +632,10 @@ def plan_batch_counts(args, chapter_segments):
     idxs = sorted(idx for idx, t in totals.items() if t > 0)
     if not total or not idxs:
         return None
+    if batch_chars > 0:
+        return {idx: min((totals[idx] + batch_chars - 1) // batch_chars,
+                         len(chapter_segments[idx]))
+                for idx in idxs}
     budget = max(budget, len(idxs))
     # Largest-remainder split: floor shares, then hand the leftover
     # requests to the largest fractional deficits (deterministic:
@@ -705,14 +757,55 @@ async def process_chapter(client, args, idx, work_dir, eng,
     # sees Capitolo 1..3, not the spine numbers 4..6.
     pos = idx if position is None else position
     title = f"Capitolo {pos + 1}"
+    xhtml = chapter_xhtml(title, segments)
+    smil = chapter_smil(ch_id, offsets)
+    # Persist the packaged pieces (owner decision, 2026-10-09): a
+    # --growing run rebuilds the single output EPUB from these
+    # artifacts, so completed chapters are never re-synthesized and the
+    # book lives in one file that grows day by day.
+    (ch_dir / f"{ch_id}.xhtml").write_text(xhtml)
+    (ch_dir / f"{ch_id}.smil").write_text(smil)
+    (ch_dir / "audio.mp3").write_bytes(audio)
+    (ch_dir / "chapter.json").write_text(json.dumps(
+        {"idx": idx, "duration": duration}))
     return {
         "ch_id": ch_id,
         "title": title,
-        "xhtml": chapter_xhtml(title, segments),
-        "smil": chapter_smil(ch_id, offsets),
+        "xhtml": xhtml,
+        "smil": smil,
         "audio": audio,
         "duration": duration,
     }
+
+
+def completed_chapters(work_dir):
+    """Chapters with a full persisted artifact set in the work dir, in
+    spine order. --growing rebuilds the output EPUB from these; a
+    chapter counts only when xhtml, smil, mp3 and metadata are all
+    present, so a half-written chapter from an interrupted run is
+    skipped until its run completes.
+    """
+    out = []
+    for ch_dir in sorted(work_dir.glob("ch*")):
+        ch_id = ch_dir.name
+        meta_file = ch_dir / "chapter.json"
+        if not meta_file.is_file():
+            continue
+        xhtml_file = ch_dir / f"{ch_id}.xhtml"
+        smil_file = ch_dir / f"{ch_id}.smil"
+        audio_file = ch_dir / "audio.mp3"
+        if not all(p.is_file() for p in (xhtml_file, smil_file, audio_file)):
+            continue
+        meta = json.loads(meta_file.read_text())
+        out.append({
+            "ch_id": ch_id,
+            "idx": int(meta["idx"]),
+            "duration": float(meta["duration"]),
+            "xhtml": xhtml_file.read_text(),
+            "smil": smil_file.read_text(),
+            "audio": audio_file.read_bytes(),
+        })
+    return sorted(out, key=lambda c: c["idx"])
 
 
 def run_generation(run, on_finish=None, on_quota=None):
@@ -833,6 +926,29 @@ def main():
     parser.add_argument("--max-request-chars", type=int, default=2000,
                         help="Per-request character cap for "
                              "--daily-requests sizing (default %(default)s)")
+    parser.add_argument("--batch-chars", type=int, default=None,
+                        help="Size batches by text instead of by budget "
+                             "(the 400-char method, owner decision "
+                             "2026-10-09): each chapter is planned into "
+                             "ceil(chars/N) requests of ~N characters, "
+                             "soft at line boundaries — short enough "
+                             "that the recitation filter almost never "
+                             "blocks; overrides --daily-requests sizing")
+    parser.add_argument("--max-requests", type=int, default=0,
+                        help="Hard cap on Gemini requests this run "
+                             "(default %(default)s: no cap, the API's "
+                             "daily 429 is the wall); reaching it aborts "
+                             "resumably (exit 75), like a daily quota")
+    parser.add_argument("--growing", action="store_true",
+                        help="Package the output EPUB from every "
+                             "completed chapter in the work dir "
+                             "(persisted artifacts), not just this run's "
+                             "selection: one growing file, completed "
+                             "chapters are never re-synthesized")
+    parser.add_argument("--package-only", action="store_true",
+                        help="Skip synthesis: rebuild the output EPUB "
+                             "from the work dir's persisted artifacts "
+                             "(no Gemini requests; requires --growing)")
 
     parser.add_argument("--preset", choices=sorted(PRESETS), default=None,
                         help="Approach preset (issue #26): expands to "
@@ -860,7 +976,9 @@ def main():
             print(f"  [{i:2d}] {size:>7} chars  {first}")
         return
 
-    if args.all:
+    if args.package_only:
+        indices = []
+    elif args.all:
         indices = [i for i, _f, _s, _t in chapters]
     elif args.chapter is not None:
         try:
@@ -881,6 +999,76 @@ def main():
         print("ERROR: --output is required for generation")
         sys.exit(1)
 
+    out_path = Path(args.output)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    work_dir = Path(args.work_dir)
+    work_dir.mkdir(parents=True, exist_ok=True)
+    title, creator = source_metadata(args.epub)
+
+    files = {"META-INF/container.xml": CONTAINER, "styles.css": CSS}
+    chapter_ids, durations = [], {}
+    t0 = time.time()
+    eng_holder = {}
+
+    def package_epub():
+        """Write the EPUB from whatever chapters are in chapter_ids
+        (shared by the normal path and the quota-abort partial). With
+        --growing, rebuild it from EVERY completed chapter in the work
+        dir — this run's chapters were just persisted there — so one
+        output file grows day by day and completed chapters are never
+        re-synthesized."""
+        if args.growing:
+            done = completed_chapters(work_dir)
+            if not done:
+                print("  growing: no completed chapters in the work dir",
+                      flush=True)
+                return
+            base = min(c["idx"] for c in done)
+            chapter_ids[:] = [c["ch_id"] for c in done]
+            durations.clear()
+            durations.update({c["ch_id"]: c["duration"] for c in done})
+            for c in done:
+                files[f"{c['ch_id']}.xhtml"] = c["xhtml"]
+                files[f"{c['ch_id']}.smil"] = c["smil"]
+                files[f"audio/{c['ch_id']}.mp3"] = c["audio"]
+            files["nav.xhtml"] = nav_doc(
+                [(c["ch_id"], f"Capitolo {c['idx'] - base + 1}")
+                 for c in done])
+        else:
+            files["nav.xhtml"] = nav_doc(
+                [(ch, f"Capitolo {i + 1}")
+                 for i, ch in enumerate(chapter_ids)])
+        files["content.opf"] = build_opf(
+            f"{title} (lettura)", creator, chapter_ids, durations)
+        print(f"\nPackaging {out_path}...", flush=True)
+        with zipfile.ZipFile(out_path, "w") as z:
+            z.writestr("mimetype", "application/epub+zip", zipfile.ZIP_STORED)
+            for name, data in files.items():
+                z.writestr(name, data, zipfile.ZIP_DEFLATED)
+
+    if args.package_only:
+        if not args.growing:
+            print("ERROR: --package-only rebuilds the output from the "
+                  "work dir's persisted artifacts; it needs --growing")
+            sys.exit(1)
+        if not completed_chapters(work_dir):
+            print(f"ERROR: no completed chapters in {work_dir}")
+            sys.exit(1)
+        package_epub()
+        errors = validate(out_path)
+        total = sum(durations.values())
+        print(f"\n{'=' * 60}")
+        print(f"PACKAGED (no synthesis) -> {out_path}")
+        print(f"  chapters: {len(chapter_ids)}, "
+              f"total audio: {clock_value(total)}")
+        if errors:
+            print(f"  VALIDATION ERRORS ({len(errors)}):")
+            for e in errors[:20]:
+                print(f"    - {e}")
+            sys.exit(1)
+        print("  validation: OK")
+        return
+
     load_env()
     if not os.environ.get("MISTRAL_API_KEY"):
         print("ERROR: MISTRAL_API_KEY not set (env or .env)")
@@ -896,20 +1084,22 @@ def main():
     import httpx
     client = Mistral(api_key=os.environ["MISTRAL_API_KEY"])
 
-    out_path = Path(args.output)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    work_dir = Path(args.work_dir)
-    work_dir.mkdir(parents=True, exist_ok=True)
-
-    files = {"META-INF/container.xml": CONTAINER, "styles.css": CSS}
-    chapter_ids, durations = [], {}
-    t0 = time.time()
-    eng_holder = {}
+    # Growing-book chapter numbering: positions are relative to the
+    # first chapter of the book (the lowest spine index among the
+    # completed chapters and today's selection), so "Capitolo N" stays
+    # stable across days — chapter 6 of the spine is Capitolo 4 once
+    # the spine's 3,4,5 are completed, whatever a later run selects.
+    growing_base = None
+    if args.growing:
+        done_idxs = [c["idx"] for c in completed_chapters(work_dir)]
+        growing_base = min(done_idxs + indices) if (done_idxs or indices) else 0
 
     # 120 s read timeout: 3.8 responses for ~300-char lines can exceed 30 s
     async def run():
         async with httpx.AsyncClient(timeout=120.0) as hc:
             eng = GeminiTTSEngine(model=args.model, style="", client=hc)
+            if args.max_requests > 0:
+                _apply_request_budget(eng, args.max_requests)
             eng_holder["eng"] = eng
             # Pass 1: prepare every chapter (cached) BEFORE the first
             # Gemini request, so the batch size covers the whole
@@ -923,11 +1113,19 @@ def main():
                 total = sum(len(t) for segs in chapter_segments.values()
                             for _s, _g, t, _v, _vn in segs)
                 planned = sum(batch_plan.values())
-                print(f"  request plan: {total} chars -> {planned} requests "
-                      f"(budget {args.daily_requests}/day, "
-                      f"cap {args.max_request_chars} chars/request)",
-                      flush=True)
+                if args.batch_chars:
+                    print(f"  request plan: {total} chars -> {planned} "
+                          f"requests (~{args.batch_chars} chars/request, "
+                          f"run cap {args.max_requests or 'none'})",
+                          flush=True)
+                else:
+                    print(f"  request plan: {total} chars -> {planned} "
+                          f"requests (budget {args.daily_requests}/day, "
+                          f"cap {args.max_request_chars} chars/request)",
+                          flush=True)
             for position, idx in enumerate(indices):
+                if growing_base is not None:
+                    position = idx - growing_base
                 print(f"\n=== Chapter {idx} ===", flush=True)
                 result = await process_chapter(
                     client, args, idx, work_dir, eng,
@@ -958,26 +1156,15 @@ def main():
               f"{totals['requests']} requests today for {args.model} "
               f"(ledger: {args.quota_ledger})", flush=True)
 
-    def package_epub():
-        """Write the EPUB from whatever chapters are in chapter_ids
-        (shared by the normal path and the quota-abort partial)."""
-        files["nav.xhtml"] = nav_doc(
-            [(ch, f"Capitolo {i + 1}")
-             for i, ch in enumerate(chapter_ids)])
-        files["content.opf"] = build_opf(
-            f"{title} (lettura)", creator, chapter_ids, durations)
-        print(f"\nPackaging {out_path}...", flush=True)
-        with zipfile.ZipFile(out_path, "w") as z:
-            z.writestr("mimetype", "application/epub+zip", zipfile.ZIP_STORED)
-            for name, data in files.items():
-                z.writestr(name, data, zipfile.ZIP_DEFLATED)
-
     def package_partial():
         """Quota-abort hook (issue #39): package the chapters that did
         complete into the output EPUB — replacing the previous partial
         with the updated one — and drop the homelab publish flag so the
-        watcher shares the partial to calibre-web/Nextcloud."""
-        if not chapter_ids:
+        watcher shares the partial to calibre-web/Nextcloud. With
+        --growing this is the whole book so far: the partial IS the
+        growing file with every completed chapter."""
+        if not chapter_ids and not (args.growing
+                                    and completed_chapters(work_dir)):
             print("  partial: no completed chapters, nothing to package",
                   flush=True)
             return
@@ -994,7 +1181,6 @@ def main():
             print("  no .publish-flags directory; skipping publish flag",
                   flush=True)
 
-    title, creator = source_metadata(args.epub)
     run_generation(run, on_finish=record_usage, on_quota=package_partial)
 
     package_epub()
