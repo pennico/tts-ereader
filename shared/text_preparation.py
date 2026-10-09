@@ -190,3 +190,65 @@ def split_long_narration(lines, max_chars=300):
         if buf:
             out.append((None, None, buf.strip()))
     return out
+
+
+# Loyal mode (owner decision, 2026-10-09): Saramago's comma-chains and
+# unmarked dialogue are the author's voice; the LLM preparation keeps
+# every word but rewrites the rhythm (merged clauses, added periods,
+# dialogue lifted onto speaker lines). The loyal mode keeps the text
+# VERBATIM — the only interventions are removing the edition's
+# editorial apparatus (embedded footnote bodies and [N] references,
+# owner decision: they are not the author's prose) and splitting
+# paragraphs so one segment stays under the ~400-char recitation-filter
+# threshold: first at the author's sentence boundaries, then — for
+# comma-chain authors whose "sentences" run for thousands of chars —
+# at the author's own clause punctuation (commas, semicolons).
+FOOTNOTE_BODY = re.compile(r"(?m)^\s*\d+\s*[-–—]\s+\S.*$")
+FOOTNOTE_REF = re.compile(r"\[\d+\]")
+
+CLAUSE_SPLIT = re.compile(r"(?<=[;,])\s+")
+
+
+def _clause_pieces(text, max_chars):
+    """Pack one over-long sentence into <= max_chars pieces, splitting
+    only at the author's own clause punctuation (the comma stays at
+    the end of the piece before the split, so the text stays verbatim).
+    A punctuation-free run longer than the threshold is hard-split at
+    a word boundary — rare, but the copyright threshold is a hard
+    owner rule."""
+    if len(text) <= max_chars:
+        return [text]
+    pieces, buf = [], ""
+    for clause in CLAUSE_SPLIT.split(text):
+        while len(clause) > max_chars:
+            cut = clause.rfind(" ", 1, max_chars + 1)
+            cut = cut if cut > 0 else max_chars
+            pieces.append(clause[:cut].strip())
+            clause = clause[cut:].strip()
+        if buf and len(buf) + 1 + len(clause) > max_chars:
+            pieces.append(buf)
+            buf = clause
+        else:
+            buf = f"{buf} {clause}".strip()
+    if buf:
+        pieces.append(buf)
+    return pieces
+
+
+def loyal_prepare(text, max_chars=300):
+    """Author-loyal preparation: no LLM, no rewriting, footnotes out.
+
+    Returns prepared-style text (one segment per blank-separated line)
+    for the same parse_lines/synthesis path: paragraphs kept intact,
+    long ones split at sentence boundaries, and sentences that still
+    exceed max_chars (Saramago's comma-chains) split at clause
+    boundaries — every piece <= max_chars. Deterministic, so no caching
+    is needed (unlike llm_prepare).
+    """
+    text = FOOTNOTE_BODY.sub("", text)
+    text = FOOTNOTE_REF.sub("", text)
+    pieces = []
+    for _speaker, _gender, line in split_long_narration(
+            parse_lines(text), max_chars=max_chars):
+        pieces.extend(_clause_pieces(line, max_chars))
+    return "\n\n".join(pieces)
