@@ -144,3 +144,17 @@ titles are stable across days: "Capitolo N" is numbered from the
 lowest completed spine index, so spine chapter 6 is Capitolo 4 once
 the spine's 3,4,5 are done. `--package-only` rebuilds the file with
 no synthesis and no API keys at all.
+
+**The daily schedule (`book-daily.sh` + `book-daily.yml`).** The whole
+book finishes day after day with one quota window per day: a scheduled
+GitHub Action (00:10 UTC, right after the observed quota reset) files a
+`run` issue and the pennico-ops dispatcher executes
+`bash book-daily.sh` directly (no LLM session). The wrapper reads the
+next unread chapter from the work dir's persisted artifacts, spends at
+most the remaining daily budget (`--max-requests`, tracked in the quota
+ledger so cached re-runs cost nothing), appends to the single growing
+EPUB, and drops the publish flag for the host watcher (Nextcloud). A
+mid-chapter budget abort is a successful day, not a failure. The
+Action is DISABLED until the repository variable `TTS_BOOK_DAILY` is
+set to `enabled` — the owner arms it when the quota is free:
+`gh variable set TTS_BOOK_DAILY --body enabled`.
