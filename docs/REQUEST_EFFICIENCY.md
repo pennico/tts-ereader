@@ -109,3 +109,52 @@ timeout-based argument against it is withdrawn.
 If a future run needs to fit a bigger book into the same budget, raise N
 (the flag is the only knob); if alignment fallbacks ever dominate,
 lower it.
+
+## The 400-char method and the growing book (2026-10-09)
+
+Two owner decisions after the ch1-3 runs, both now in
+`gemini_readaloud.py`:
+
+**`--batch-chars N` (the 400-char method).** Batch sizing by text
+instead of by budget: each chapter is planned into `ceil(chars/N)`
+requests of ~N characters, soft at line boundaries
+(`pack_batches_by_count` flexes around the target; the hard
+`--max-request-chars` cap only bites on giant lines). Measured on the
+recitation filter: passages up to ~300-400 chars almost never block,
+~900-char batches block every 7-10 — so ~400-char batches cost ~2x
+fewer requests than the per-line method with near-zero filter
+fallbacks. `--daily-requests` budget sizing is ignored in this mode;
+the run is capped instead by:
+
+**`--max-requests N`.** A hard cap on Gemini requests per run,
+enforced at the engine's two synthesize methods (lines, batches and
+fallbacks alike). Reaching it raises the same resumable
+`QuotaExhausted` as a daily-quota 429: exit 75, cached segments kept,
+next run resumes free. This is what lets a scheduled run stop at the
+planned budget (e.g. 90 of 100/day, keeping margin for ad-hoc tests)
+instead of relying on the API's wall.
+
+**`--growing` + `--package-only`.** The whole book lives in ONE output
+EPUB. Each processed chapter persists its packaged pieces
+(`chNNN.xhtml`, `chNNN.smil`, `audio.mp3`, `chapter.json`) in the work
+dir; `--growing` rebuilds the output from EVERY completed chapter
+found there, so completed chapters are never re-synthesized and a
+quota-abort partial is the book with everything read so far. Chapter
+titles are stable across days: "Capitolo N" is numbered from the
+lowest completed spine index, so spine chapter 6 is Capitolo 4 once
+the spine's 3,4,5 are done. `--package-only` rebuilds the file with
+no synthesis and no API keys at all.
+
+**The daily schedule (`book-daily.sh` + `book-daily.yml`).** The whole
+book finishes day after day with one quota window per day: a scheduled
+GitHub Action (00:10 UTC, right after the observed quota reset) files a
+`run` issue and the pennico-ops dispatcher executes
+`bash book-daily.sh` directly (no LLM session). The wrapper reads the
+next unread chapter from the work dir's persisted artifacts, spends at
+most the remaining daily budget (`--max-requests`, tracked in the quota
+ledger so cached re-runs cost nothing), appends to the single growing
+EPUB, and drops the publish flag for the host watcher (Nextcloud). A
+mid-chapter budget abort is a successful day, not a failure. The
+Action is DISABLED until the repository variable `TTS_BOOK_DAILY` is
+set to `enabled` — the owner arms it when the quota is free:
+`gh variable set TTS_BOOK_DAILY --body enabled`.
