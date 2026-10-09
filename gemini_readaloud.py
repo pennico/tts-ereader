@@ -13,11 +13,13 @@ requests while keeping per-line voice casting, per-line SMIL offsets
 per-batch cache keys, and the per-line fallbacks (recitation-filter
 sentence-splitting, exit-75 quota abort).
 
-Batch sizing (owner decision, 2026-10-07): by default the WHOLE
-required text is spread over --daily-requests 90 requests — each
-request carries total_chars/90 characters (capped by
---max-request-chars) — so a full read fits one day's 100-request
-quota with the remainder as margin for ad-hoc daily tests.
+Batch sizing (owner decision, 2026-10-09): hard on count, soft on
+length. By default the daily request budget --daily-requests 90 (of
+the observed 100/day quota, keeping the remainder as margin for
+ad-hoc daily tests) is split over the chapters proportionally to
+their text, and each batch flexes in length around its share, up to
+the hard --max-request-chars cap — so a full read takes at most 90
+requests regardless of where the line boundaries fall.
 --lines-per-request N overrides the sizing with fixed batches;
 --daily-requests 0 restores the original one-request-per-line box
 method.
@@ -555,43 +557,72 @@ def to_mp3(wav_bytes):
     return out.getvalue()
 
 
-def plan_batch_chars(args, chapter_segments):
-    """Owner request-split policy (2026-10-07): spread the whole
-    required text over the daily request budget — default 90 of the
-    observed 100/day free-tier limit, keeping the remainder as margin
-    for ad-hoc daily tests — so each request carries total_chars /
-    budget characters and a full read takes at most `budget` requests.
+def plan_batch_counts(args, chapter_segments):
+    """Owner request-split policy (2026-10-09): hard on count, soft on
+    length. The daily request budget — default 90 of the observed
+    100/day free-tier limit, keeping the remainder as margin for ad-hoc
+    daily tests — is split over the chapters in proportion to their
+    text (largest-remainder), so the planned request count never
+    exceeds the budget. pack_batches_by_count then lets each batch
+    flex in length around its share of the text, up to the hard
+    --max-request-chars cap; when the cap bites the run needs more
+    than the budget and resumes across days via the cache + the
+    exit-75 quota abort.
 
-    Returns the per-request character target, or None when batching is
-    not wanted (--lines-per-request set, or --daily-requests 0 = the
-    per-line box method). The target is capped by --max-request-chars;
-    when the cap bites, the run needs more than `budget` requests and
-    resumes across days via the cache + exit-75 quota abort.
+    Returns {chapter_idx: batch_count}, or None when batching is not
+    wanted (--lines-per-request set, or --daily-requests 0 = the
+    per-line box method).
     """
     if getattr(args, "lines_per_request", None):
         return None
     budget = getattr(args, "daily_requests", 0) or 0
     if budget <= 0:
         return None
-    total = sum(len(t) for segs in chapter_segments.values()
-                for _s, _g, t, _v, _vn in segs)
-    if not total:
+    totals = {idx: sum(len(t) + 1 for _s, _g, t, _v, _vn in segs)
+              for idx, segs in chapter_segments.items()}
+    total = sum(totals.values())
+    idxs = sorted(idx for idx, t in totals.items() if t > 0)
+    if not total or not idxs:
         return None
-    per_request = -(-total // budget)  # ceil(total / budget)
-    return max(1, min(per_request, args.max_request_chars))
+    budget = max(budget, len(idxs))
+    # Largest-remainder split: floor shares, then hand the leftover
+    # requests to the largest fractional deficits (deterministic:
+    # ties go to the lower chapter index).
+    shares = {idx: budget * totals[idx] / total for idx in idxs}
+    counts = {idx: max(1, int(shares[idx])) for idx in idxs}
+    while sum(counts.values()) > budget:
+        counts[max(idxs, key=lambda i: counts[i])] -= 1
+    for _ in range(budget - sum(counts.values())):
+        counts[max(idxs, key=lambda i: shares[i] - counts[i])] += 1
+    # A chapter cannot use more batches than it has lines.
+    return {idx: min(counts[idx], len(chapter_segments[idx]))
+            for idx in idxs}
 
 
-def pack_batches_by_chars(segments, batch_chars):
-    """Group consecutive lines into batches of at most batch_chars
-    characters (a single longer line becomes its own batch)."""
-    batches, current, size = [], [], 0
-    for seg in segments:
-        line_len = len(seg[2]) + 1  # +1: the newline joining batch lines
-        if current and size + line_len > batch_chars:
+def pack_batches_by_count(segments, n, max_chars):
+    """Split consecutive lines into at most n batches, soft on length
+    and hard on count: each batch flexes around total/n characters
+    (ideal boundaries at j*total/n), and a line that would push the
+    batch past max_chars starts a new batch — so the count exceeds n
+    only when the hard cap bites (giant lines)."""
+    if n <= 0 or not segments:
+        return []
+    n = min(n, len(segments))
+    weights = [len(seg[2]) + 1 for seg in segments]  # +1: joining newline
+    total = sum(weights)
+    boundary = total / n
+    batches, current, size, cum, j = [], [], 0, 0, 1
+    for seg, w in zip(segments, weights):
+        if current and size + w > max_chars:
             batches.append(current)
             current, size = [], 0
         current.append(seg)
-        size += line_len
+        size += w
+        cum += w
+        if j < n and cum >= j * boundary:
+            batches.append(current)
+            current, size = [], 0
+            j += 1
     if current:
         batches.append(current)
     return batches
@@ -614,7 +645,7 @@ def prepare_chapter(client, args, idx, work_dir):
 
 
 async def process_chapter(client, args, idx, work_dir, eng,
-                          segments=None, batch_chars=None):
+                          segments=None, batch_count=None, position=None):
     ch_id = f"ch{idx:03d}"
     ch_dir = work_dir / ch_id
     cache_dir = work_dir / "gemini_segments" / args.model.replace(".", "_")
@@ -633,9 +664,11 @@ async def process_chapter(client, args, idx, work_dir, eng,
     if npr > 1:
         batches = [segments[i:i + npr] for i in range(0, len(segments), npr)]
         mode = f"fixed {npr} lines/request"
-    elif batch_chars:
-        batches = pack_batches_by_chars(segments, batch_chars)
-        mode = f"auto-sized, <= {batch_chars} chars/request"
+    elif batch_count:
+        batches = pack_batches_by_count(segments, batch_count,
+                                        args.max_request_chars)
+        mode = (f"auto-sized, {batch_count} requests planned "
+                f"(soft length, cap {args.max_request_chars} chars)")
     else:
         batches = None
     if batches is not None:
@@ -667,7 +700,11 @@ async def process_chapter(client, args, idx, work_dir, eng,
     duration = offsets[-1][1] if offsets else 0.0
     print(f"  audio: {duration:.1f}s ({clock_value(duration)})", flush=True)
 
-    title = f"Capitolo {idx + 1}"
+    # Label by position in the selection, not the EPUB spine index:
+    # --chapter 3,4,5 is "the first three chapters", so the listener
+    # sees Capitolo 1..3, not the spine numbers 4..6.
+    pos = idx if position is None else position
+    title = f"Capitolo {pos + 1}"
     return {
         "ch_id": ch_id,
         "title": title,
@@ -678,14 +715,16 @@ async def process_chapter(client, args, idx, work_dir, eng,
     }
 
 
-def run_generation(run, on_finish=None):
+def run_generation(run, on_finish=None, on_quota=None):
     """Await the generation, converting a resumable quota abort into a
     clean one-line message and exit code EXIT_QUOTA (75) instead of a
     traceback and exit 1 — wrappers must be able to tell "re-run
     tomorrow" apart from a real failure (issue #21). on_finish runs on
     every exit path (including the quota abort and real failures): a
     run that spent requests updates the quota ledger even when it does
-    not finish (issue #25)."""
+    not finish (issue #25). on_quota runs only on the quota abort,
+    before the exit: the caller packages the chapters that did
+    complete and shares the partial (issue #39)."""
     try:
         asyncio.run(run())
     except QuotaExhausted as e:
@@ -693,6 +732,8 @@ def run_generation(run, on_finish=None):
               flush=True)
         print("Re-run after the quota reset to resume; "
               "cached lines are not re-spent.", flush=True)
+        if on_quota:
+            on_quota()
         sys.exit(EXIT_QUOTA)
     finally:
         if on_finish:
@@ -723,7 +764,7 @@ def apply_preset(args):
     Returns the expansion line to print in the run log, or None when
     no preset was given. Without a preset nothing is touched: the
     default stays the owner's --daily-requests auto-sizing (2026-10-07,
-    issue #25) — lines_per_request None lets plan_batch_chars size
+    issue #25) — lines_per_request None lets plan_batch_counts size
     requests from the daily budget.
     """
     if args.preset is None:
@@ -733,7 +774,7 @@ def apply_preset(args):
     if args.preset == "quality":
         # 1 line/request is indistinguishable from auto-sizing to the
         # batching logic (a falsy lines_per_request falls through to
-        # plan_batch_chars), so the box method needs the budget off.
+        # plan_batch_counts), so the box method needs the budget off.
         args.daily_requests = 0
     return f"preset: {args.preset} -> --lines-per-request {args.lines_per_request}"
 
@@ -781,13 +822,14 @@ def main():
                              "Gemini request; overrides --daily-requests "
                              "auto-sizing")
     parser.add_argument("--daily-requests", type=int, default=90,
-                        help="Auto-size requests so the whole required "
-                             "text takes at most N requests: each carries "
-                             "total_chars/N chars, capped by "
-                             "--max-request-chars (default %(default)s of "
-                             "the observed 100/day free-tier limit, "
-                             "keeping the remainder as margin for ad-hoc "
-                             "daily tests; 0 = one request per line)")
+                        help="Plan the whole required text into at most "
+                             "N requests: the budget is split over the "
+                             "chapters by length and each batch flexes "
+                             "in size, capped by --max-request-chars "
+                             "(default %(default)s of the observed 100/day "
+                             "free-tier limit, keeping the remainder as "
+                             "margin for ad-hoc daily tests; 0 = one "
+                             "request per line)")
     parser.add_argument("--max-request-chars", type=int, default=2000,
                         help="Per-request character cap for "
                              "--daily-requests sizing (default %(default)s)")
@@ -876,20 +918,22 @@ def main():
             for idx in indices:
                 chapter_segments[idx] = prepare_chapter(
                     client, args, idx, work_dir)
-            batch_chars = plan_batch_chars(args, chapter_segments)
-            if batch_chars:
+            batch_plan = plan_batch_counts(args, chapter_segments)
+            if batch_plan:
                 total = sum(len(t) for segs in chapter_segments.values()
                             for _s, _g, t, _v, _vn in segs)
-                est = -(-total // batch_chars)
-                print(f"  request plan: {total} chars -> ~{est} requests "
+                planned = sum(batch_plan.values())
+                print(f"  request plan: {total} chars -> {planned} requests "
                       f"(budget {args.daily_requests}/day, "
                       f"cap {args.max_request_chars} chars/request)",
                       flush=True)
-            for idx in indices:
+            for position, idx in enumerate(indices):
                 print(f"\n=== Chapter {idx} ===", flush=True)
-                result = await process_chapter(client, args, idx, work_dir,
-                                               eng, chapter_segments[idx],
-                                               batch_chars)
+                result = await process_chapter(
+                    client, args, idx, work_dir, eng,
+                    chapter_segments[idx],
+                    batch_plan[idx] if batch_plan else None,
+                    position=position)
                 ch = result["ch_id"]
                 files[f"{ch}.xhtml"] = result["xhtml"]
                 files[f"{ch}.smil"] = result["smil"]
@@ -914,18 +958,46 @@ def main():
               f"{totals['requests']} requests today for {args.model} "
               f"(ledger: {args.quota_ledger})", flush=True)
 
-    run_generation(run, on_finish=record_usage)
+    def package_epub():
+        """Write the EPUB from whatever chapters are in chapter_ids
+        (shared by the normal path and the quota-abort partial)."""
+        files["nav.xhtml"] = nav_doc(
+            [(ch, f"Capitolo {i + 1}")
+             for i, ch in enumerate(chapter_ids)])
+        files["content.opf"] = build_opf(
+            f"{title} (lettura)", creator, chapter_ids, durations)
+        print(f"\nPackaging {out_path}...", flush=True)
+        with zipfile.ZipFile(out_path, "w") as z:
+            z.writestr("mimetype", "application/epub+zip", zipfile.ZIP_STORED)
+            for name, data in files.items():
+                z.writestr(name, data, zipfile.ZIP_DEFLATED)
+
+    def package_partial():
+        """Quota-abort hook (issue #39): package the chapters that did
+        complete into the output EPUB — replacing the previous partial
+        with the updated one — and drop the homelab publish flag so the
+        watcher shares the partial to calibre-web/Nextcloud."""
+        if not chapter_ids:
+            print("  partial: no completed chapters, nothing to package",
+                  flush=True)
+            return
+        package_epub()
+        total = sum(durations[ch] for ch in chapter_ids)
+        print(f"  partial: {len(chapter_ids)} chapter(s), "
+              f"audio {clock_value(total)} -> {out_path}", flush=True)
+        flags = Path(__file__).resolve().parent.parent / ".publish-flags"
+        if flags.is_dir():
+            (flags / "tts-ereader").write_text("quota-partial\n")
+            print(f"  publish flag dropped: {flags / 'tts-ereader'}",
+                  flush=True)
+        else:
+            print("  no .publish-flags directory; skipping publish flag",
+                  flush=True)
 
     title, creator = source_metadata(args.epub)
-    files["nav.xhtml"] = nav_doc(
-        [(ch, f"Capitolo {i + 1}") for i, ch in zip(indices, chapter_ids)])
-    files["content.opf"] = build_opf(f"{title} (lettura)", creator, chapter_ids, durations)
+    run_generation(run, on_finish=record_usage, on_quota=package_partial)
 
-    print(f"\nPackaging {out_path}...", flush=True)
-    with zipfile.ZipFile(out_path, "w") as z:
-        z.writestr("mimetype", "application/epub+zip", zipfile.ZIP_STORED)
-        for name, data in files.items():
-            z.writestr(name, data, zipfile.ZIP_DEFLATED)
+    package_epub()
 
     errors = validate(out_path)
     total = sum(durations.values())

@@ -426,6 +426,32 @@ def test_run_generation_records_usage_on_real_failure():
     assert seen == [1]
 
 
+def test_run_generation_quota_abort_runs_on_quota_hook():
+    # Issue #39: on the quota abort the caller packages the completed
+    # chapters and shares the partial — on_quota runs before the exit,
+    # and never on success or real failure.
+    calls = []
+
+    async def quota_run():
+        raise gr.QuotaExhausted("daily quota exhausted")
+
+    async def ok_run():
+        return None
+
+    async def broke_run():
+        raise RuntimeError("broke")
+
+    with pytest.raises(SystemExit) as ei:
+        gr.run_generation(quota_run, on_quota=lambda: calls.append("quota"))
+    assert ei.value.code == 75
+    assert calls == ["quota"]
+    gr.run_generation(ok_run, on_quota=lambda: calls.append("never"))
+    assert calls == ["quota"]
+    with pytest.raises(RuntimeError, match="broke"):
+        gr.run_generation(broke_run, on_quota=lambda: calls.append("never"))
+    assert calls == ["quota"]
+
+
 # ── process_chapter, batched end to end ────────────────────────────────────
 
 
@@ -444,7 +470,8 @@ def _chapter_args(tmp_path, epub, lines_per_request, idx=0):
         model_llm="mistral-large-latest", reprepare=False,
         model="gemini-3.8-flash-tts", pace=0, gap_ms=250,
         narrator="Rami", voice_m="Rami", voice_f="Kore", single=None,
-        lines_per_request=lines_per_request,
+        lines_per_request=lines_per_request, daily_requests=90,
+        max_request_chars=2000,
     )
 
 
@@ -516,48 +543,75 @@ def _seg(text):
     return (None, None, text, "Rami", "Rami")
 
 
-def test_plan_batch_chars_spreads_text_over_daily_budget():
-    # Owner policy (2026-10-07): total_chars / 90 per request, so the
-    # whole required text fits the 90-request daily reading budget.
+def _segs(n, size):
+    return [_seg("x" * size) for _ in range(n)]
+
+
+def test_plan_batch_counts_splits_budget_over_chapters():
+    # Owner policy (2026-10-09): hard on count — the planned request
+    # count never exceeds the daily budget, whatever the line lengths.
+    args = types.SimpleNamespace(lines_per_request=None, daily_requests=90,
+                                 max_request_chars=2000)
+    assert gr.plan_batch_counts(args, {0: _segs(100, 400)}) == {0: 90}
+    # multiple chapters share the budget proportionally (equal text)
+    segs = {0: _segs(100, 200), 1: _segs(100, 200)}
+    assert gr.plan_batch_counts(args, segs) == {0: 45, 1: 45}
+    # proportional with remainder: 3:1 text -> 68/22 (ties go to the
+    # lower chapter index), still exactly the 90-request budget
+    segs = {0: _segs(90, 300), 1: _segs(30, 300)}
+    assert gr.plan_batch_counts(args, segs) == {0: 68, 1: 22}
+    # a chapter cannot use more batches than it has lines
+    segs = {0: [_seg("x" * 40000), _seg("y" * 40000)]}
+    assert gr.plan_batch_counts(args, segs) == {0: 2}
+    # every chapter with text keeps at least one batch even when the
+    # budget is smaller than the chapter count
+    args = types.SimpleNamespace(lines_per_request=None, daily_requests=2,
+                                 max_request_chars=2000)
+    segs = {0: _segs(5, 100), 1: _segs(5, 100), 2: _segs(5, 100)}
+    assert gr.plan_batch_counts(args, segs) == {0: 1, 1: 1, 2: 1}
+
+
+def test_plan_batch_counts_disables():
     args = types.SimpleNamespace(lines_per_request=None, daily_requests=90,
                                  max_request_chars=2000)
     segs = {0: [_seg("x" * 40000)]}
-    assert gr.plan_batch_chars(args, segs) == 445  # ceil(40000/90)
-    # multiple chapters count together
-    segs = {0: [_seg("x" * 20000)], 1: [_seg("y" * 20000)]}
-    assert gr.plan_batch_chars(args, segs) == 445
-
-
-def test_plan_batch_chars_caps_and_disables():
-    args = types.SimpleNamespace(lines_per_request=None, daily_requests=90,
-                                 max_request_chars=200)
-    segs = {0: [_seg("x" * 40000)]}
-    assert gr.plan_batch_chars(args, segs) == 200  # cap bites
     # --lines-per-request overrides the auto-sizing
     args = types.SimpleNamespace(lines_per_request=10, daily_requests=90,
-                                max_request_chars=2000)
-    assert gr.plan_batch_chars(args, segs) is None
+                                 max_request_chars=2000)
+    assert gr.plan_batch_counts(args, segs) is None
     # --daily-requests 0 = the per-line box method
     args = types.SimpleNamespace(lines_per_request=None, daily_requests=0,
                                  max_request_chars=2000)
-    assert gr.plan_batch_chars(args, segs) is None
+    assert gr.plan_batch_counts(args, segs) is None
     # nothing to read
     args = types.SimpleNamespace(lines_per_request=None, daily_requests=90,
                                  max_request_chars=2000)
-    assert gr.plan_batch_chars(args, {0: []}) is None
+    assert gr.plan_batch_counts(args, {0: []}) is None
 
 
-def test_pack_batches_by_chars_groups_lines():
+def test_pack_batches_by_count_hard_count_soft_length():
     segs = [_seg("a" * 100), _seg("b" * 100), _seg("c" * 100),
             _seg("d" * 100)]
-    batches = gr.pack_batches_by_chars(segs, 250)
+    # exactly n batches however the lengths fall
+    batches = gr.pack_batches_by_count(segs, 2, 2000)
     assert [len(b) for b in batches] == [2, 2]
-    # a single line longer than the target becomes its own batch
+    batches = gr.pack_batches_by_count(segs, 3, 2000)
+    assert [len(b) for b in batches] == [2, 1, 1]
+    batches = gr.pack_batches_by_count(segs, 4, 2000)
+    assert [len(b) for b in batches] == [1, 1, 1, 1]
+    # n larger than the line count: one batch per line, never empty
+    batches = gr.pack_batches_by_count(segs, 9, 2000)
+    assert [len(b) for b in batches] == [1, 1, 1, 1]
+    # the hard char cap bites: a line that would overflow starts a new
+    # batch, so the count can exceed n (resumable via exit 75)
+    batches = gr.pack_batches_by_count(segs, 2, 150)
+    assert [len(b) for b in batches] == [1, 1, 1, 1]
+    # a single line longer than the cap becomes its own batch
     segs = [_seg("a" * 100), _seg("b" * 500), _seg("c" * 100)]
-    batches = gr.pack_batches_by_chars(segs, 250)
+    batches = gr.pack_batches_by_count(segs, 2, 250)
     assert [len(b) for b in batches] == [1, 1, 1]
     # empty input
-    assert gr.pack_batches_by_chars([], 250) == []
+    assert gr.pack_batches_by_count([], 3, 2000) == []
 
 
 @pytest.mark.asyncio
@@ -587,9 +641,7 @@ async def test_process_chapter_auto_batched_fits_daily_budget(tmp_path):
 
     segments = gr.prepare_chapter(None, args, 0, work_dir)
     assert len(segments) == 11
-    total = sum(len(s[2]) for s in segments)
-    batch_chars = max(1, -(-total // 3))
-    batches = gr.pack_batches_by_chars(segments, batch_chars)
+    batches = gr.pack_batches_by_count(segments, 3, args.max_request_chars)
     assert 1 < len(batches) < 11  # batched, not per-line
 
     def batch_wav(turns):
@@ -602,7 +654,7 @@ async def test_process_chapter_auto_batched_fits_daily_budget(tmp_path):
 
     result = await gr.process_chapter(None, args, 0, work_dir, eng,
                                       segments=segments,
-                                      batch_chars=batch_chars)
+                                      batch_count=3)
     assert eng.request_count == len(batches)
     assert result["smil"].count("<par") == 11
     assert result["xhtml"].count("<p") == 11
