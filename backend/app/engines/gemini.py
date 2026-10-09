@@ -60,11 +60,31 @@ def _response_shape(data: object) -> dict:
         "finish_reasons": [
             c.get("finishReason") for c in candidates if isinstance(c, dict)
         ],
+        "finish_messages": [
+            str(c.get("finishMessage"))[:160]
+            for c in candidates if isinstance(c, dict)
+        ],
         "candidate_keys": [
             sorted(c.keys()) for c in candidates if isinstance(c, dict)
         ],
         "prompt_feedback": data.get("promptFeedback"),
     }
+
+
+def _is_recitation_block(data: object) -> bool:
+    """True when Gemini's copyright recitation filter blocked the
+    passage: 200 with finishReason OTHER and no audio content (the
+    finishMessage names copyrighted material). The block is
+    deterministic per passage — re-sending the identical request can
+    never succeed and only burns request quota, so the caller must
+    fall back to smaller pieces, not retry."""
+    if not isinstance(data, dict):
+        return False
+    candidates = data.get("candidates")
+    if not isinstance(candidates, list) or not candidates:
+        return False
+    first = candidates[0]
+    return isinstance(first, dict) and first.get("finishReason") == "OTHER"
 
 
 class GeminiTTSEngine(TTSEngine):
@@ -177,6 +197,13 @@ class GeminiTTSEngine(TTSEngine):
                     attempts,
                     json.dumps(shape, default=str),
                 )
+                if _is_recitation_block(data):
+                    # Deterministic per passage: a retry cannot succeed
+                    # and only burns request quota (issue #39).
+                    raise EngineError(
+                        f"Gemini recitation block (finishReason OTHER, "
+                        f"no content): {json.dumps(shape, default=str)}"
+                    ) from e
                 if attempt == attempts - 1:
                     raise EngineError(
                         f"unexpected Gemini response shape after "

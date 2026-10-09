@@ -252,6 +252,28 @@ async def test_gemini_raises_after_retries_exhausted():
     assert len(client.requests) == 3  # bounded: 1 + len(retry_delays)
 
 
+@pytest.mark.asyncio
+async def test_gemini_recitation_block_is_not_retried():
+    # Issue #39: a 200 with finishReason OTHER and no content is the
+    # copyright recitation filter — deterministic per passage, so
+    # re-sending the identical request can never succeed and only
+    # burns request quota. One request, then EngineError carrying the
+    # response shape (the readaloud layer matches on it to fall back
+    # to per-line synthesis).
+    blocked = {
+        "candidates": [{
+            "finishReason": "OTHER",
+            "finishMessage": "The response contains copyrighted material.",
+        }],
+    }
+    client = _FakeClientSeq([_FakeResponse(payload=blocked)] * 3)
+    engine = GeminiTTSEngine(api_key="k", client=client, retry_delays=(0.0, 0.0))
+    with pytest.raises(EngineError, match="recitation block") as excinfo:
+        await engine.synthesize("Ciao", "Kore")
+    assert '"finish_reasons": ["OTHER"]' in str(excinfo.value)
+    assert len(client.requests) == 1  # no retries on a deterministic block
+
+
 class _RawBodyResponse(_FakeResponse):
     """200 response whose json() body is not a dict (proxy/CDN garbage)."""
 
