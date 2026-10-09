@@ -37,7 +37,7 @@ def test_preset_expands_to_lines_per_request():
 def test_no_preset_keeps_owner_auto_sizing_default():
     # Without a preset nothing is touched: the default is the owner's
     # --daily-requests auto-sizing (2026-10-07), so lines_per_request
-    # stays None and plan_batch_chars sizes from the daily budget.
+    # stays None and plan_batch_counts sizes from the daily budget.
     args = _args()
     assert gr.apply_preset(args) is None
     assert args.lines_per_request is None
