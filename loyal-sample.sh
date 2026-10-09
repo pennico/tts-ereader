@@ -6,8 +6,8 @@
 # approach BEFORE the full loyal schedule is armed.
 #
 # Trigger: the scheduled GitHub Action (loyal-sample.yml) files a
-# `run` issue; the pennico-ops dispatcher executes this script in the
-# repo clone inside the agent-runner container (no LLM session).
+# `run` issue; the ops dispatcher executes this script in the repo
+# clone inside the agent-runner container (no LLM session).
 #
 # One-shot: the schedule fires only while the repository variable
 # TTS_LOYAL_SAMPLE = "enabled"; a SUCCESSFUL run deletes the variable

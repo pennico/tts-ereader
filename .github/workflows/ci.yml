@@ -17,7 +17,7 @@ jobs:
       - name: Install ffmpeg (pydub to_mp3 in tests)
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - name: Install deps (locked)
-        run: pip install -r requirements.lock -r requirements-dev.txt ruff
+        run: pip install -r requirements.lock -r requirements-dev.txt
       - name: Lint
         run: ruff check .
       - name: Tests
