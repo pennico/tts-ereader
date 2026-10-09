@@ -148,7 +148,7 @@ no synthesis and no API keys at all.
 **The daily schedule (`book-daily.sh` + `book-daily.yml`).** The whole
 book finishes day after day with one quota window per day: a scheduled
 GitHub Action (00:10 UTC, right after the observed quota reset) files a
-`run` issue and the pennico-ops dispatcher executes
+`run` issue and the ops dispatcher executes
 `bash book-daily.sh` directly (no LLM session). The wrapper reads the
 next unread chapter from the work dir's persisted artifacts, spends at
 most the remaining daily budget (`--max-requests`, tracked in the quota
