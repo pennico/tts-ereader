@@ -37,6 +37,7 @@ def _fingerprint(args, idx, text):
     return "|".join(str(x) for x in
                     (Path(args.epub).resolve(), idx, args.slice,
                      args.max_chars, args.model_llm,
+                     getattr(args, "prepare_mode", "prepared"),
                      hashlib.sha1(text.encode()).hexdigest()))
 
 

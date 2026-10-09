@@ -495,6 +495,7 @@ async def test_process_chapter_batched_counts_requests_and_keeps_offsets(tmp_pat
     fingerprint = "|".join(str(x) for x in
                           (Path(args.epub).resolve(), 0, args.slice,
                            args.max_chars, args.model_llm,
+                           getattr(args, "prepare_mode", "prepared"),
                            hashlib.sha1(text.encode()).hexdigest()))
     ch_dir = work_dir / "ch000"
     ch_dir.mkdir(parents=True)
@@ -633,6 +634,7 @@ async def test_process_chapter_auto_batched_fits_daily_budget(tmp_path):
     fingerprint = "|".join(str(x) for x in
                           (Path(args.epub).resolve(), 0, args.slice,
                            args.max_chars, args.model_llm,
+                           getattr(args, "prepare_mode", "prepared"),
                            hashlib.sha1(text.encode()).hexdigest()))
     ch_dir = work_dir / "ch000"
     ch_dir.mkdir(parents=True)
