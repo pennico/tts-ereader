@@ -158,3 +158,29 @@ mid-chapter budget abort is a successful day, not a failure. The
 Action is DISABLED until the repository variable `TTS_BOOK_DAILY` is
 set to `enabled` — the owner arms it when the quota is free:
 `gh variable set TTS_BOOK_DAILY --body enabled`.
+
+## The loyal mode (`--prepare-mode loyal`, 2026-10-09)
+
+The prepared mode's LLM pass keeps every word but rewrites the rhythm
+(merged clauses, added periods, dialogue lifted onto speaker lines).
+For most books that is a quality win; for an author whose rhythm IS
+the work (Saramago's comma-chains, unmarked dialogue) it flattens the
+prose. The loyal mode keeps the text VERBATIM — no LLM call at all,
+so it spends no Mistral quota and needs no cache. The only
+interventions, both owner decisions:
+
+- the edition's editorial apparatus is removed (embedded footnote
+  bodies and `[N]` references — not the author's prose);
+- paragraphs longer than the recitation-filter threshold are split at
+  the author's own sentence boundaries into <= 300-char pieces — and
+  a "sentence" that still exceeds it (Saramago: comma-chains thousands
+  of chars long) is split at the author's own clause punctuation
+  (commas, semicolons), the text staying verbatim either way.
+
+Each piece is one request (box method): best quality, and the
+~300-char size keeps the copyright filter out. Cost: more requests per
+chapter than the 400-char method, so the loyal book is slower in
+quota-days — the tradeoff the owner chose for this author. The two
+modes never share cache: the prepared-text fingerprint includes the
+prepare mode. `book-daily.sh APPROACH=loyal` runs the schedule this
+way; outputs live apart under `out/readings/<approach>-gemini38/`.

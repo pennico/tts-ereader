@@ -109,7 +109,12 @@ from epub_readaloud import (  # noqa: E402
 from poc_reader import chunk_text, extract_epub_chapter, list_epub_chapters  # noqa: E402
 from shared.audio_clean import THRESH_QUIET, clean_pcm  # noqa: E402
 from shared.quota_ledger import add_entry, day_totals  # noqa: E402
-from shared.text_preparation import llm_prepare, parse_lines, split_long_narration  # noqa: E402
+from shared.text_preparation import (  # noqa: E402
+    llm_prepare,
+    loyal_prepare,
+    parse_lines,
+    split_long_narration,
+)  # noqa: E402
 
 RATE_DEFAULT = 24000  # Gemini TTS output sample rate
 
@@ -161,6 +166,7 @@ def prepared_chapter_text(client, args, idx, ch_dir, text):
     fingerprint = "|".join(str(x) for x in
                            (Path(args.epub).resolve(), idx, args.slice,
                             args.max_chars, args.model_llm,
+                            getattr(args, "prepare_mode", "prepared"),
                             hashlib.sha1(text.encode()).hexdigest()))
     if (not args.reprepare and prepared_file.exists()
             and meta_file.exists()
@@ -681,7 +687,7 @@ def pack_batches_by_count(segments, n, max_chars):
 
 
 def prepare_chapter(client, args, idx, work_dir):
-    """Prepare one chapter's segments: extract, LLM-prepare (cached),
+    """Prepare one chapter's segments: extract, prepare (LLM or loyal),
     parse lines, cast voices. Runs before the first Gemini request so
     the batch size can be computed over the whole required text."""
     ch_id = f"ch{idx:03d}"
@@ -690,7 +696,14 @@ def prepare_chapter(client, args, idx, work_dir):
     book_title, _creator = source_metadata(args.epub)
     text = strip_title_leak(
         slice_text(extract_epub_chapter(args.epub, idx), args.slice), book_title)
-    prepared = prepared_chapter_text(client, args, idx, ch_dir, text)
+    if getattr(args, "prepare_mode", "prepared") == "loyal":
+        # Author-loyal mode (owner decision, 2026-10-09): verbatim text,
+        # footnotes out, deterministic — no LLM call, no cache needed.
+        # Pieces stay <= 300 chars: sentence boundaries first, then
+        # clause boundaries for comma-chain authors (Saramago).
+        prepared = loyal_prepare(text)
+    else:
+        prepared = prepared_chapter_text(client, args, idx, ch_dir, text)
     lines = split_long_narration(parse_lines(prepared))
     return [(s, g, t, cast_voice(s, g, args), cast_voice(s, g, args))
             for s, g, t in lines]
@@ -889,6 +902,15 @@ def main():
                              "decision 2026-10-07)")
     parser.add_argument("--model-llm", default="mistral-large-latest",
                         help="Mistral model for text preparation")
+    parser.add_argument("--prepare-mode", choices=["prepared", "loyal"],
+                        default="prepared",
+                        help="Text breakdown (owner decision, 2026-10-09): "
+                             "prepared = LLM repunctuates and tags dialogue "
+                             "(best for normal books); loyal = the author's "
+                             "text verbatim, footnotes removed, paragraphs "
+                             "split at sentence then clause boundaries, all "
+                             "pieces <= 300 chars (for authors whose rhythm "
+                             "IS the work, e.g. Saramago)")
     parser.add_argument("--max-chars", type=int, default=4000)
     parser.add_argument("--narrator", default="Kore", help="Narration voice "
                         "(--cast mode only)")
