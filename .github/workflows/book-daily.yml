@@ -23,6 +23,13 @@ on:
     - cron: "10 0 * * *"
   workflow_dispatch: {}
 
+# The GITHUB_TOKEN needs explicit write access to create the `run`
+# issue; without this block the default read-only token fails with
+# 403 "Resource not accessible by integration" (seen 2026-10-10 on
+# loyal-sample, same github-script issue creation).
+permissions:
+  issues: write
+
 jobs:
   file-run-issue:
     if: vars.TTS_BOOK_DAILY == 'enabled'
