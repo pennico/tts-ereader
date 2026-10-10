@@ -23,18 +23,52 @@ import gemini_readaloud as gr  # noqa: E402
 from shared.text_preparation import loyal_prepare  # noqa: E402
 
 
-def test_loyal_prepare_removes_footnotes():
-    text = (
-        "Il bianco, senza muoversi, sembrava aspettare.\n"
-        "1 – Nota editoriale che nessuno vuole sentire leggere.\n"
-        "La città era lì, con le sue case[3], e il fiume[12] passava."
-    )
+def test_loyal_prepare_defers_footnotes_to_first_available_point():
+    # Owner decision, 2026-10-10: the edition embeds note bodies inline,
+    # mid-sentence; a verbatim read hears them at a wrong time. The
+    # body must be lifted out and re-read at the first available point
+    # (here: the comma + capital dialogue break), prefixed with a
+    # recall of the word the reference attached to.
+    text = ("Parla del fiume [1] nella città, 1 - Il fiume è il Tago.\n\n"
+            "e la città dormiva, Poi venne l'alba.")
     out = loyal_prepare(text)
-    assert "Nota editoriale" not in out
+    assert "[1]" not in out and "1 -" not in out
+    assert "nella città, e la città dormiva," in " ".join(out.split())
+    assert "Nota 1, fiume: Il fiume è il Tago." in out
+    # the note lands between the break ("dormiva,") and the flow resume
+    flat = " ".join(out.split())
+    assert flat.index("dormiva,") < flat.index("Nota 1,") < flat.index("Poi venne")
+
+
+def test_loyal_prepare_keeps_note_already_on_a_break_in_place():
+    # A body that already sits on a break (comma + capital) is read in
+    # place, only wrapped in the recall prefix.
+    text = ("Lei è irrimediabilmente scettico, come disse Camões [2], "
+            "2 - Luis Vas de Camões, esule in India.\n\n"
+            "Tutti gli autori sono Apelle.")
+    out = loyal_prepare(text)
+    flat = " ".join(out.split())
+    assert "Camões, Nota 2, Camões: Luis Vas de Camões," in flat
+    assert flat.index("Nota 2,") < flat.index("Tutti gli autori")
+
+
+def test_loyal_prepare_ref_without_body_is_just_stripped():
+    text = "La città era lì, con le sue case[3], e il fiume[12] passava."
+    out = loyal_prepare(text)
     assert "[3]" not in out and "[12]" not in out
-    # the author's words survive untouched
-    assert "Il bianco, senza muoversi, sembrava aspettare." in out
-    assert "con le sue case, e il fiume passava." in out
+    assert "case, e il fiume passava." in " ".join(out.split())
+    assert "Nota" not in out
+
+
+def test_loyal_prepare_body_dates_do_not_spawn_false_notes():
+    # "1845 - Parigi" inside a body must not be taken for the marker of
+    # another pending reference: the (?<!\d) guard blocks it.
+    text = ("Ricorda Eça [1] e Camões [2] a lungo, 1 - Il narratore "
+            "(Minho 1845 - Parigi 1900) fu un revisore.\n\n"
+            "e la città dormiva, Poi venne l'alba.")
+    out = loyal_prepare(text)
+    assert out.count("Nota ") == 1
+    assert "Nota 1, Eça:" in out
 
 
 def test_loyal_prepare_is_verbatim():
