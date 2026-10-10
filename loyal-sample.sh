@@ -17,6 +17,9 @@ set -u
 cd "$(dirname "$0")"
 
 MODEL=gemini-3.8-flash-lite-tts
+SLICE=${SLICE:-3700}             # source chars for this sample
+OFFSET=${OFFSET:-0}              # paragraphs skipped first: continue a
+NAME=${NAME:-loyal-sample-ch1}   # previous sample (OFFSET=its SLICE)
 WORK=/tmp/loyal-sample-work      # throwaway: a slice must NOT seed the
 OUT=/tmp/loyal-sample.epub       # growing book's work dir (it would
 LISTEN=out/listening             # mark ch1 complete while partial)
@@ -28,7 +31,8 @@ fi
 
 rm -rf "$WORK" "$OUT"
 python3 gemini_readaloud.py --epub out/archive/saramago.epub --chapter 3 \
-    --slice 3700 --prepare-mode loyal --single Rami --model "$MODEL" \
+    --slice "$SLICE" --slice-offset "$OFFSET" \
+    --prepare-mode loyal --single Rami --model "$MODEL" \
     --daily-requests 0 --max-requests 16 \
     --work-dir "$WORK" --output "$OUT"
 rc=$?
@@ -39,7 +43,7 @@ fi
 
 # Share the audio: extract the chapter mp3 from the sample EPUB.
 mkdir -p "$LISTEN"
-python3 - "$OUT" "$LISTEN/loyal-sample-ch1.mp3" <<'PY'
+python3 - "$OUT" "$LISTEN/$NAME.mp3" <<'PY'
 import sys, zipfile
 with zipfile.ZipFile(sys.argv[1]) as z:
     audio = sorted(n for n in z.namelist()
@@ -67,4 +71,4 @@ if command -v gh >/dev/null 2>&1; then
       && echo "schedule disarmed (TTS_LOYAL_SAMPLE deleted)" \
       || echo "WARN: could not disarm TTS_LOYAL_SAMPLE"
 fi
-echo "sample published: $LISTEN/loyal-sample-ch1.mp3"
+echo "sample published: $LISTEN/$NAME.mp3"
