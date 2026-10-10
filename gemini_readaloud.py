@@ -186,6 +186,40 @@ def prepared_chapter_text(client, args, idx, ch_dir, text):
 
 SENTENCE_GAP_MS = 120  # pause between sentences of a split line
 
+# Loyal-mode break analysis (owner decision, 2026-10-10): Saramago's
+# comma-chains carry the rhythm, so the silence between segments
+# follows the punctuation at the split instead of one uniform gap.
+# A period is a longer break; a plain comma is very brief (the flow
+# keeps flowing); a comma followed by a capital letter — the author's
+# unmarked dialogue marker — is a change of character: sudden, only
+# slightly slower than a plain comma, the new intonation starts
+# immediately (same voice; the capital does the intonation work).
+GAP_SENTENCE_MS = 500
+GAP_DIALOGUE_MS = 120
+GAP_CLAUSE_MS = 70
+
+
+def boundary_gaps(segments, base_gap_ms):
+    """Silence (ms) after each segment, from the punctuation at the
+    split (loyal mode). The last segment gets 0 (nothing is stitched
+    after it)."""
+    gaps = []
+    for i, seg in enumerate(segments):
+        if i + 1 >= len(segments):
+            gaps.append(0)
+            continue
+        prev = seg[2].rstrip()
+        nxt = segments[i + 1][2].lstrip()
+        if prev.endswith((".", "!", "?")):
+            gaps.append(GAP_SENTENCE_MS)
+        elif prev.endswith((",", ";", ":")) and nxt[:1].isupper():
+            gaps.append(GAP_DIALOGUE_MS)
+        elif prev.endswith((",", ";", ":")):
+            gaps.append(GAP_CLAUSE_MS)
+        else:
+            gaps.append(base_gap_ms)
+    return gaps
+
 
 def _is_content_filter(exc):
     """True when Gemini's copyright recitation filter blocked the passage.
@@ -557,6 +591,10 @@ async def _synth_subbatch(eng, sub, cache_dir, pace, max_retries=5):
 def stitch(segments, gap_ms):
     """Concatenate cleaned segments with a silence gap.
 
+    gap_ms is either one uniform gap (int) or a per-segment list of
+    gaps after each segment (loyal mode's punctuation-aware breaks;
+    the entry after the last segment is unused).
+
     Returns (wav_bytes, offsets) where wav_bytes is a complete WAV
     (RIFF header, mono, rate/width taken from the segments themselves —
     the engine can return rates other than 24 kHz, and a hardcoded
@@ -564,14 +602,14 @@ def stitch(segments, gap_ms):
     and offsets are (start, end) second pairs per segment, excluding
     the trailing gap.
     """
-    rate, width, gap = RATE_DEFAULT, 2, b""
+    rate, width = RATE_DEFAULT, 2
     frames, offsets, t = [], [], 0.0
     for i, seg in enumerate(segments):
+        seg_gap_ms = gap_ms[i] if isinstance(gap_ms, list) else gap_ms
         with wave.open(str(seg)) as w:
             seg_rate, seg_width = w.getframerate(), w.getsampwidth()
             if i == 0:
                 rate, width = seg_rate, seg_width
-                gap = b"\x00" * (rate * width * gap_ms // 1000)
             elif (seg_rate, seg_width) != (rate, width):
                 # Concatenating mixed-format PCM cannot produce a valid
                 # single-header WAV; fail loudly instead of corrupting
@@ -584,8 +622,8 @@ def stitch(segments, gap_ms):
         dur = len(data) / (rate * width)
         offsets.append((t, t + dur))
         frames.append(data)
-        frames.append(gap)
-        t += dur + gap_ms / 1000.0
+        frames.append(b"\x00" * (rate * width * seg_gap_ms // 1000))
+        t += dur + seg_gap_ms / 1000.0
     out = io.BytesIO()
     with wave.open(out, "w") as w:
         w.setnchannels(1)
@@ -695,7 +733,8 @@ def prepare_chapter(client, args, idx, work_dir):
     ch_dir.mkdir(parents=True, exist_ok=True)
     book_title, _creator = source_metadata(args.epub)
     text = strip_title_leak(
-        slice_text(extract_epub_chapter(args.epub, idx), args.slice), book_title)
+        slice_text(extract_epub_chapter(args.epub, idx), args.slice,
+                   getattr(args, "slice_offset", 0)), book_title)
     if getattr(args, "prepare_mode", "prepared") == "loyal":
         # Author-loyal mode (owner decision, 2026-10-09): verbatim text,
         # footnotes out, deterministic — no LLM call, no cache needed.
@@ -759,7 +798,16 @@ async def process_chapter(client, args, idx, work_dir, eng,
             seg_files.append(path)
             print(f"    line {i:03d} [{s or 'narr'} -> {voice}] done", flush=True)
 
-    wav_bytes, offsets = stitch(seg_files, args.gap_ms)
+    # Loyal mode (owner decision, 2026-10-10): the silence between
+    # segments follows the punctuation at the split — period = longer
+    # break, plain comma = very brief, comma + capital = the author's
+    # dialogue marker, sudden but a beat. Other modes keep the uniform
+    # --gap-ms.
+    if getattr(args, "prepare_mode", "prepared") == "loyal":
+        gaps = boundary_gaps(segments, args.gap_ms)
+    else:
+        gaps = args.gap_ms
+    wav_bytes, offsets = stitch(seg_files, gaps)
     (ch_dir / "audio.wav").write_bytes(wav_bytes)
     audio = to_mp3(wav_bytes)
     duration = offsets[-1][1] if offsets else 0.0
@@ -895,6 +943,10 @@ def main():
                              "one output EPUB")
     parser.add_argument("--all", action="store_true", help="Process all chapters")
     parser.add_argument("--slice", type=int, help="Max source chars per chapter (test mode)")
+    parser.add_argument("--slice-offset", type=int, default=0,
+                        help="Skip whole paragraphs until at least this many "
+                             "chars are skipped before --slice (test mode: "
+                             "read the paragraphs after a previous slice)")
     parser.add_argument("--output", help="Output EPUB path")
     parser.add_argument("--work-dir", default="out/gemini_readaloud_work")
     parser.add_argument("--model", default="gemini-3.8-flash-lite-tts",
