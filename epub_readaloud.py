@@ -74,8 +74,19 @@ CONTAINER = """<?xml version="1.0" encoding="utf-8"?>
 """
 
 
-def slice_text(text, budget):
-    """Cut at a paragraph boundary so the budget is not exceeded mid-paragraph."""
+def slice_text(text, budget, offset=0):
+    """Cut at a paragraph boundary so the budget is not exceeded
+    mid-paragraph. With offset, whole paragraphs are skipped until at
+    least offset chars are skipped first, so a test slice can start
+    right after a previous one: slice_text(t, B) includes exactly the
+    paragraphs that slice_text(t, B, offset=B) skips (same accounting,
+    same cut points)."""
+    paras = text.split("\n\n")
+    if offset and paras:
+        skipped = len(paras.pop(0))
+        while paras and skipped + len(paras[0]) <= offset:
+            skipped += len(paras.pop(0))
+        text = "\n\n".join(paras)
     if not budget or len(text) <= budget:
         return text
     out, total = [], 0

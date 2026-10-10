@@ -121,3 +121,41 @@ def test_prepared_fingerprint_separates_prepare_modes(tmp_path, monkeypatch):
         gr.prepared_chapter_text(object(), args, 0, ch_dir, "same text")
         fingerprints.append((ch_dir / "prepared_meta.txt").read_text())
     assert fingerprints[0] != fingerprints[1]
+
+
+def test_boundary_gaps_follow_the_saramago_break_rules():
+    # Owner decision, 2026-10-10: the silence between pieces follows
+    # the punctuation at the split. Period = longer break; plain comma
+    # = very brief, the flow keeps flowing; comma + capital (the
+    # author's unmarked dialogue marker) = change of character,
+    # sudden but a beat slower than a plain comma; same voice.
+    seg = lambda t: (None, None, t, "Rami", "Rami")  # noqa: E731
+    segments = [
+        seg("Il bianco, senza muoversi, sembrava aspettare,"),   # -> lowercase
+        seg("e il fiume passava lento."),                        # -> capital, after period
+        seg("Disse il rabbino, senza alzare la voce,"),          # -> capital, after comma
+        seg("Se Dio è Dio, allora,"),                           # -> lowercase
+        seg("non è difficile da capire,"),
+    ]
+    gaps = gr.boundary_gaps(segments, base_gap_ms=250)
+    assert gaps == [
+        gr.GAP_CLAUSE_MS,     # comma, flow continues
+        gr.GAP_SENTENCE_MS,   # period: longer break
+        gr.GAP_DIALOGUE_MS,   # comma + capital: character change
+        gr.GAP_CLAUSE_MS,
+        0,                    # nothing is stitched after the last piece
+    ]
+    assert gr.GAP_CLAUSE_MS < gr.GAP_DIALOGUE_MS < gr.GAP_SENTENCE_MS
+
+
+def test_slice_offset_continues_after_a_previous_slice():
+    # slice_text(t, B) reads exactly the paragraphs that
+    # slice_text(t, B, offset=B) skips: the second sample starts at
+    # the paragraph right after the first one, nothing reread, no gap.
+    paras = [c * 100 for c in "ABCDE"]
+    text = "\n\n".join(paras)
+    first = gr.slice_text(text, 250)
+    second = gr.slice_text(text, 250, offset=250)
+    assert first == "\n\n".join(paras[:2])    # A, B (C would exceed 250)
+    assert second == "\n\n".join(paras[2:4])  # C, D: the budget caps the
+    # new read at 250 chars again; E is left for a third slice
