@@ -196,15 +196,98 @@ def split_long_narration(lines, max_chars=300):
 # unmarked dialogue are the author's voice; the LLM preparation keeps
 # every word but rewrites the rhythm (merged clauses, added periods,
 # dialogue lifted onto speaker lines). The loyal mode keeps the text
-# VERBATIM — the only interventions are removing the edition's
-# editorial apparatus (embedded footnote bodies and [N] references,
-# owner decision: they are not the author's prose) and splitting
-# paragraphs so one segment stays under the ~400-char recitation-filter
-# threshold: first at the author's sentence boundaries, then — for
-# comma-chain authors whose "sentences" run for thousands of chars —
-# at the author's own clause punctuation (commas, semicolons).
-FOOTNOTE_BODY = re.compile(r"(?m)^\s*\d+\s*[-–—]\s+\S.*$")
-FOOTNOTE_REF = re.compile(r"\[\d+\]")
+# VERBATIM — the only interventions are deferring the edition's
+# embedded footnote bodies to their first available point with a
+# recall prefix (owner decision, 2026-10-10, see below), dropping the
+# [N] reference markers, and splitting paragraphs so one segment
+# stays under the ~400-char recitation-filter threshold: first at the
+# author's sentence boundaries, then — for comma-chain authors whose
+# "sentences" run for thousands of chars — at the author's own clause
+# punctuation (commas, semicolons).
+# Footnotes (owner decision, 2026-10-10): the edition embeds each note
+# body INLINE in the prose, mid-sentence ("...quali strade 1 - Il
+# narratore José Maria de Eça..."), running to the end of its
+# paragraph, while the interrupted sentence resumes in the next one —
+# so a verbatim read hears the note at a wrong time. Loyal mode now
+# identifies each body (a "N -" marker whose N matches a [N] reference
+# seen earlier; the (?<!\d) guard keeps dates like "1845 - Parigi"
+# from matching), lifts it out of the flow, and re-inserts it at the
+# FIRST AVAILABLE POINT — in place if the body already sat on a break,
+# else the next natural break: a sentence end or a comma followed by a
+# capital (the author's dialogue marker, already a stitch break). Each
+# note is prefixed with a recall of the word its reference attached to,
+# so the listener knows what it refers to:
+# "Nota 1, Eça: Il narratore José Maria de Eça...".
+FOOTNOTE_REF = re.compile(r"(\S+)\s*\[(\d+)\]")
+FOOTNOTE_REF_BARE = re.compile(r"\s*\[\d+\]")
+FOOTNOTE_BODY_MARK = re.compile(r"(?<!\d)(\d+)\s*[-–—]\s+")
+NOTE_BREAK = re.compile(r"[.!?](?=\s|$)|[,;:]\s+(?=[A-ZÀ-Ù])")
+
+
+def _next_break(text, pos, spans):
+    """First natural break (sentence end, or comma + capital) at or
+    after pos, skipping already-inserted note paragraphs; the end of
+    the text if none."""
+    while True:
+        m = NOTE_BREAK.search(text, pos)
+        if m is None:
+            return len(text)
+        inside = next((e for s, e in spans if s <= m.start() < e), None)
+        if inside is None:
+            return m.end()
+        pos = inside
+
+
+def _defer_footnotes(text):
+    """Lift inline footnote bodies out of the prose flow and re-insert
+    each at its first available point, prefixed with a recall of the
+    reference's anchor word. A body is identified only when its number
+    matches a [N] reference seen in the text (the recall needs the
+    anchor word); anything else stays verbatim."""
+    anchors = {}
+
+    def _drop_ref(m):
+        anchors.setdefault(int(m.group(2)),
+                           m.group(1).rstrip(".,;:!?«»\"'"))
+        return m.group(1)
+
+    text = FOOTNOTE_REF.sub(_drop_ref, text)
+    text = FOOTNOTE_REF_BARE.sub("", text)
+    done, spans = set(), []
+    while True:
+        mark = next(
+            (m for m in FOOTNOTE_BODY_MARK.finditer(text)
+             if not any(s <= m.start() < e for s, e in spans)
+             and int(m.group(1)) in anchors
+             and int(m.group(1)) not in done), None)
+        if mark is None:
+            return text
+        n = int(mark.group(1))
+        done.add(n)
+        para_end = text.find("\n\n", mark.start())
+        if para_end == -1:
+            para_end = len(text)
+        body = text[mark.end():para_end].strip()
+        head = text[:mark.start()].rstrip()
+        tail = text[para_end:].lstrip("\n")
+        text = head + "\n\n" + tail
+        # First available point: in place if the body already sat on a
+        # break (paragraph start, sentence end, or comma + capital);
+        # else the next natural break in the remaining prose.
+        if (not head or head.endswith((".", "!", "?"))
+                or (head.endswith((",", ";", ":"))
+                    and tail.lstrip()[:1].isupper())):
+            ip = len(head)
+        else:
+            ip = _next_break(text, len(head), spans)
+        note = f"Nota {n}, {anchors[n]}: {body}"
+        before = text[:ip].rstrip()
+        new = before + "\n\n" + note + "\n\n" + text[ip:].lstrip()
+        delta = len(new) - len(text)
+        spans = [(s + delta if s >= ip else s, e + delta if s >= ip else e)
+                 for s, e in spans]
+        spans.append((len(before) + 2, len(before) + 2 + len(note)))
+        text = new
 
 CLAUSE_SPLIT = re.compile(r"(?<=[;,])\s+")
 
@@ -236,7 +319,9 @@ def _clause_pieces(text, max_chars):
 
 
 def loyal_prepare(text, max_chars=300):
-    """Author-loyal preparation: no LLM, no rewriting, footnotes out.
+    """Author-loyal preparation: no LLM, no rewriting. Footnote bodies
+    are lifted out of the prose flow and deferred to their first
+    available point with a recall prefix (owner decision, 2026-10-10).
 
     Returns prepared-style text (one segment per blank-separated line)
     for the same parse_lines/synthesis path: paragraphs kept intact,
@@ -245,8 +330,7 @@ def loyal_prepare(text, max_chars=300):
     boundaries — every piece <= max_chars. Deterministic, so no caching
     is needed (unlike llm_prepare).
     """
-    text = FOOTNOTE_BODY.sub("", text)
-    text = FOOTNOTE_REF.sub("", text)
+    text = _defer_footnotes(text)
     pieces = []
     for _speaker, _gender, line in split_long_narration(
             parse_lines(text), max_chars=max_chars):
