@@ -92,6 +92,11 @@ def test_default_casts():
     da = vc.default_cast("edge", "da-DK")
     assert da[vc.ROLE_NARRATOR][0] == "da-DK-JeppeNeural"
     assert da[vc.ROLE_FEMALE_1][0] == "da-DK-ChristelNeural"
+    en = vc.default_cast("edge", "en-US")
+    assert en[vc.ROLE_NARRATOR][0] == "en-US-AndrewMultilingualNeural"
+    assert en[vc.ROLE_FEMALE_1][0] == "en-US-EmmaMultilingualNeural"
+    assert en[vc.ROLE_FEMALE_OTHER][0] == "en-GB-SoniaMultilingualNeural"
+    assert en[vc.ROLE_MALE_SHORT][0] == "en-US-BrianMultilingualNeural"
     gem = vc.default_cast("gemini", "it")
     assert gem[vc.ROLE_NARRATOR][0] == "Charon"
     assert gem[vc.ROLE_FEMALE_1][0] == "Kore"
