@@ -1,4 +1,4 @@
-# AI-Powered TTS eReader
+# tts-ereader: Self-hosted read-along e-reader with AI narration
 
 An AI-powered text-to-speech system that analyzes text for characters, emotion, and context, then synthesizes expressive speech with distinct character voices. The v0 CLI pipeline is validated and preserved; the v1 reader app (library, reader view, TTS with voice-by-progression, Docker deployment) is implemented.
 
