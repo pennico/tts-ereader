@@ -48,6 +48,14 @@ CAST_EDGE_DA = {
     ROLE_MALE_SHORT: ("en-US-AndrewMultilingualNeural", "Andrew"),
 }
 
+# English cast: multilingual en-US voices, one en-GB for female variety.
+CAST_EDGE_EN = {
+    ROLE_NARRATOR: ("en-US-AndrewMultilingualNeural", "Andrew"),
+    ROLE_FEMALE_1: ("en-US-EmmaMultilingualNeural", "Emma"),
+    ROLE_FEMALE_OTHER: ("en-GB-SoniaMultilingualNeural", "Sonia"),
+    ROLE_MALE_SHORT: ("en-US-BrianMultilingualNeural", "Brian"),
+}
+
 # Gemini prebuilt voices are language-agnostic; one cast serves both books.
 CAST_GEMINI = {
     ROLE_NARRATOR: ("Charon", "Charon"),
@@ -59,6 +67,7 @@ CAST_GEMINI = {
 DEFAULT_CASTS = {
     ("edge", "it"): CAST_EDGE_IT,
     ("edge", "da"): CAST_EDGE_DA,
+    ("edge", "en"): CAST_EDGE_EN,
     ("gemini", None): CAST_GEMINI,
 }
 
