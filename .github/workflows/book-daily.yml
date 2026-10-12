@@ -4,7 +4,7 @@
 # VERBATIM (footnotes out, one request per paragraph — the box method),
 # appended to the single growing EPUB (out/readings/loyal-gemini38/
 # readalong-saramago-full.epub). Files a `run` issue; the ops
-# dispatcher executes `APPROACH=loyal bash book-daily.sh` in the repo
+# dispatcher executes `bash -c 'APPROACH=loyal bash book-daily.sh'` in the repo
 # clone inside the agent-runner container (no LLM session) and
 # notifies over ntfy.
 #
@@ -52,7 +52,7 @@ jobs:
               owner, repo,
               title: 'book-daily: read the next chapter(s)',
               body: [
-                'APPROACH=loyal bash book-daily.sh',
+                "bash -c 'APPROACH=loyal bash book-daily.sh'",
                 '',
                 'Scheduled daily growing-book reading (auto-filed by '
                 + 'book-daily.yml; the dispatcher executes the command '
