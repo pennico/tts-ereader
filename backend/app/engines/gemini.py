@@ -123,7 +123,16 @@ class GeminiTTSEngine(TTSEngine):
         return self._api_key or os.environ.get("GEMINI_API_KEY")
 
     def is_available(self) -> bool:
-        return bool(self._key())
+        if not self._key():
+            return False
+        # The REST client is a lazy import (see _post); without it synthesis
+        # fails at request time, so availability must not report True with
+        # the dependency missing (issue #39: /api/health lied in the image).
+        try:
+            import httpx  # noqa: F401
+        except ImportError:
+            return False
+        return True
 
     async def _post(self, payload: dict) -> dict:
         import httpx

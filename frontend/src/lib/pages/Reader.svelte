@@ -86,8 +86,11 @@
   let suppressScroll = false; // follow-voice scrolling is not user scrolling
   let repositionTimer: ReturnType<typeof setTimeout> | null = null;
 
-  const tts = createTtsStore(bookId, browserStorage(), onTtsChange);
+  // prevTts must be declared before the store is created: createTtsStore
+  // subscribes synchronously, so onTtsChange runs inside this very
+  // initializer and would hit the temporal dead zone otherwise (issue #39).
   let prevTts: TtsSettings | null = null;
+  const tts = createTtsStore(bookId, browserStorage(), onTtsChange);
 
   function onTtsChange(next: TtsSettings): void {
     if (prevTts === null) {

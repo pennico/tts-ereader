@@ -599,6 +599,12 @@ synthesis was verified by the owner on 2026-09-19 for Italian and Danish
 Steel chapter 1 opening, ~1,100 chars, voices Kore and Charon); the
 sandbox only exercises engines through mocks plus free edge-tts smoke tests.
 
+Packaging note (issue #39): httpx is a runtime dependency of the Gemini
+engine and is pinned in `requirements.txt`; it was previously dev-only,
+so the packaged image failed at synthesis time with `ModuleNotFoundError`
+while `/api/health` still reported gemini available. `is_available()` now
+checks the import too.
+
 Known limitation (seen live 2026-09-29): `GeminiTTSEngine`'s httpx client
 uses a 30 s read timeout, which is too tight for requests beyond roughly
 1,000 characters — the same ~1,100-char sample succeeded with Kore but
