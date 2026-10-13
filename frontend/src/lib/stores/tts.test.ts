@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { mergeTtsSettings } from "./tts";
 import { DEFAULT_TTS_SETTINGS } from "../types";
+import type { TtsSettings } from "../types";
 
 describe("mergeTtsSettings", () => {
   it("returns defaults for null stored values", () => {
@@ -59,8 +60,8 @@ describe("mergeTtsSettings", () => {
         narrator: "da-DK-JeppeNeural",
         female_1: 42, // invalid voice: dropped
         villain: "evil-voice", // unknown role: dropped
-      } as unknown as Record<string, string>,
-    });
+      },
+    } as unknown as Partial<TtsSettings>);
     expect(merged.castEnabled).toBe(false);
     expect(merged.cast).toEqual({ narrator: "da-DK-JeppeNeural" });
   });
