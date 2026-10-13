@@ -12,6 +12,7 @@ annotated-types==0.8.0
     # via pydantic
 anyio==4.15.1
     # via
+    #   httpx
     #   httpx2
     #   starlette
 attrs==26.1.0
@@ -19,6 +20,8 @@ attrs==26.1.0
 certifi==2026.7.22
     # via
     #   edge-tts
+    #   httpcore
+    #   httpx
     #   requests
 charset-normalizer==3.5.2
     # via requests
@@ -34,17 +37,25 @@ frozenlist==1.8.0
     # via
     #   aiohttp
     #   aiosignal
+greenlet==3.5.6
+    # via sqlalchemy
 h11==0.16.0
     # via
+    #   httpcore
     #   httpcore2
     #   uvicorn
+httpcore==1.0.9
+    # via httpx
 httpcore2==2.13.1
     # via httpx2
+httpx==0.28.1
+    # via -r requirements.txt
 httpx2==2.13.1
     # via mistralai
 idna==3.20
     # via
     #   anyio
+    #   httpx
     #   httpx2
     #   requests
     #   yarl

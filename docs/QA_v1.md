@@ -238,6 +238,7 @@ Both defects fixed on branch `fix/reader-tdz-httpx`:
    `GeminiTTSEngine.is_available()` now also returns False when httpx
    cannot be imported, so `/api/health` no longer reports gemini
    available with the client missing (regression test added). Backend
-   suite: 121/121 in a fresh venv. `requirements.lock` still needs
-   regeneration on the homelab:
-   `uv pip compile requirements.txt -o requirements.lock`.
+   suite: 121/121 in a fresh venv. `requirements.lock` regenerated
+   (2026-10-13 follow-up session, `uv pip compile requirements.txt -o
+   requirements.lock` in a throwaway venv): `httpx==0.28.1` plus
+   `httpcore` and `greenlet` added, no churn to existing pins.
