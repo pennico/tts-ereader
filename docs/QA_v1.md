@@ -56,6 +56,7 @@ Key invariants of the automated suites:
 |---|---|---|
 | Docker smoke test | `cp .env.example .env`, fill keys, `docker compose up -d --build`, import a fixture EPUB, tap-to-read, check `/api/health` | AC-702 |
 | Live TTS benchmark | `python3 benchmark_tts.py --repeats 3` with real keys; record the realtime factors below (§3.2) | AC-603, AC-604 |
+| Resource profile | `python3 benchmark_profile.py` (sandbox/mock: §3.6); re-run on the homelab after the image rebuild to capture real-engine overhead | AC-606, AC-607 |
 | Frontend unit run | `cd frontend && npm test && npm run check` | — |
 | Offline banner | Load the app, then switch the browser to offline (devtools → Network → Offline). A banner ("Offline — the server is unreachable. Reading and cached audio still work; imports and synthesis will fail until the connection returns.") must appear with `role="status"`; going back online must remove it. | AC-701 (indicator) |
 | Highlight sync | Play a chapter, watch the spoken-sentence highlight; measure perceived delay vs audio with a stopwatch/tap count | AC-206 |
@@ -109,8 +110,10 @@ Caveats, stated plainly:
   playback start) needs a real browser and is unmeasured; a first-ever tap
   on uncached text includes synthesis and exceeds 50 ms by design — the
   criterion is read as applying to the cached path.
-- AC-606/AC-607 (memory/CPU, P1) have no profiling harness and are
-  unmeasured.
+- AC-606/AC-607 (memory/CPU, P1) are measured by
+  `benchmark_profile.py` (§3.6). The sandbox run uses the mock engine,
+  so it profiles the backend's own overhead; a homelab run after the
+  image rebuild will capture real-engine overhead on top.
 
 ### 3.2 P0 performance, live-key criteria (AC-603, AC-604) — PASS (2026-10-13, self-hosted)
 
@@ -153,6 +156,25 @@ list chapters → fetch chapter text → `POST /api/tts/synthesize` (mock
 engine) returns playable audio + word boundaries. Browser-level E2E was
 dropped; see §5.
 
+### 3.6 P1 resource profile (AC-606, AC-607) — PASS (2026-10-13, sandbox, mock engine)
+
+Measured with `python3 benchmark_profile.py` (10 concurrent synthesize
+requests; 5 s read-along-paced window; MockTTSEngine, so these numbers
+profile the backend's own overhead — request handling, caching, audio
+assembly — not any real engine's footprint):
+
+| AC | Measurement | Budget | Value | Result |
+|---|---|---|---|---|
+| AC-606 | Peak RSS, 10 concurrent synthesize requests | <500 MB | peak 70 MB (baseline 69 MB) | PASS |
+| AC-607 | Mean CPU, read-along-paced synthesis (5.0 s, 8 chunks) | <50% of one core | 1.2% of one core (0.2% of 6 cores) | PASS |
+
+Reading of the criteria: AC-607's budget is applied to the one-core
+equivalent (100% = one full core); the machine share is reported
+alongside. The CPU window models background synthesis at read-along
+pace (synthesize one chunk, idle for its playback duration) — a tight
+synthesis loop would peg the CPU by construction. Re-run on the homelab
+after the image rebuild (PR #65) to capture real-engine overhead.
+
 ## 4. Untested items (honest list)
 
 1. Frontend Vitest suite — RUN 2026-10-13 self-hosted: 55/55 pass
@@ -160,7 +182,9 @@ dropped; see §5.
    only). See §6.
 2. Offline banner — VERIFIED 2026-10-13 self-hosted (§6).
 3. AC-603/AC-604 live benchmark — RUN 2026-10-13, both PASS (§3.2).
-4. AC-606/AC-607 memory/CPU profiling — no harness exists.
+4. AC-606/AC-607 memory/CPU profiling — RUN 2026-10-13 sandbox with the
+   mock engine, both PASS (§3.6); the real-engine homelab run is pending
+   on the image rebuild (PR #65).
 5. AC-206 highlight-sync delay (<100 ms) — BLOCKED: the reader route
    crashes in the production bundle (§6); retest after the fix.
 6. Docker self-hosted smoke test — RUN 2026-10-13, PASS (§6).
