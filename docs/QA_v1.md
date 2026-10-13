@@ -112,7 +112,7 @@ Caveats, stated plainly:
 - AC-606/AC-607 (memory/CPU, P1) have no profiling harness and are
   unmeasured.
 
-### 3.2 P0 performance, live-key criteria (AC-603, AC-604) — PENDING
+### 3.2 P0 performance, live-key criteria (AC-603, AC-604) — PASS (2026-10-13, self-hosted)
 
 These require one live run on the self-hosted server with real API keys (the sandbox
 has none and must never run live synthesis). Run and append the table:
@@ -123,8 +123,8 @@ python3 benchmark_tts.py --repeats 3     # edge-tts + Gemini, it + da
 
 | AC | Criterion | Budget | Result |
 |---|---|---|---|
-| AC-603 | edge-tts synthesis < 2.0x realtime | < 2.0x | **PENDING self-hosted run** |
-| AC-604 | Gemini synthesis < 1.5x realtime | < 1.5x | **PENDING self-hosted run** |
+| AC-603 | edge-tts synthesis < 2.0x realtime | < 2.0x | **PASS 2026-10-13: 0.026–0.051x** (9 runs, it/da, 3 voices) |
+| AC-604 | Gemini synthesis < 1.5x realtime | < 1.5x | **PASS 2026-10-13: 0.368–0.429x** (12 runs, Charon/Kore, it/da) — needed ad-hoc httpx install, see §6 |
 
 Mind the Gemini free-tier quota (~10 requests/day): `--repeats 3` with the
 default voices stays within it; resume interrupted runs rather than
@@ -155,14 +155,15 @@ dropped; see §5.
 
 ## 4. Untested items (honest list)
 
-1. Frontend Vitest suite — never executed anywhere (no Node.js in the
-   cloud sandbox; CI runs the pytest suites only).
-2. Offline banner — manual procedure in §1.2, no automated test.
-3. AC-603/AC-604 live benchmark — pending self-hosted run (§3.2).
+1. Frontend Vitest suite — RUN 2026-10-13 self-hosted: 55/55 pass
+   (7 files); svelte-check: 1 type error in tts.test.ts:57 (test file
+   only). See §6.
+2. Offline banner — VERIFIED 2026-10-13 self-hosted (§6).
+3. AC-603/AC-604 live benchmark — RUN 2026-10-13, both PASS (§3.2).
 4. AC-606/AC-607 memory/CPU profiling — no harness exists.
-5. AC-206 highlight-sync delay (<100 ms) — needs a real browser with
-   audio; manual procedure in §1.2.
-6. Docker self-hosted smoke test — procedure in §1.2.
+5. AC-206 highlight-sync delay (<100 ms) — BLOCKED: the reader route
+   crashes in the production bundle (§6); retest after the fix.
+6. Docker self-hosted smoke test — RUN 2026-10-13, PASS (§6).
 
 ## 5. E2E (Playwright) decision
 
@@ -190,3 +191,29 @@ list.
 
 *Document status: delivered; AC-603/AC-604 results and the self-hosted manual
 items remain open and are tracked in the PR handoff for issue #19.*
+
+## 6. Self-hosted validation run (2026-10-13)
+
+Run on the homelab against the compose stack (`docker compose up -d
+--build`, container `tts-ereader`, port 8000) with real API keys.
+
+| Item | Result |
+|---|---|
+| Docker smoke test (AC-702) | PASS — `/api/health` ok (data dir writable, engines gemini+edge listed); EPUB import via `POST /api/books` ok (22 chapters); container healthy |
+| Live benchmark AC-603 (edge < 2.0x) | PASS — 0.026–0.051x realtime, 9 runs (it/da, 3 voices, 3 repeats) |
+| Live benchmark AC-604 (Gemini < 1.5x) | PASS — 0.368–0.429x realtime, 12 runs (Charon/Kore, it/da, 3 repeats) |
+| Frontend vitest | PASS — 55/55 tests, 7 files (node:20 container) |
+| svelte-check | 1 error: `tts.test.ts:57` — `castEnabled: "yes"` (string) where `boolean \| undefined` is expected. Test file only; the production build is unaffected. |
+| Offline banner (AC-701) | PASS — banner appears with `role="status"` and the exact copy, clears on reconnect (Playwright offline emulation) |
+| Reader route (AC-206, AC-101–117) | **FAIL — the reader page is blank**: `ReferenceError: Cannot access 'ce' before initialization` at `assets/index-ERqrqvaa.js:18:13488` (store subscribe during module init; TDZ). Repro: production build, open `/#/book/1` — the library `/#/` renders fine. Likely a circular import that only manifests in the Rollup bundle. Blocks highlight-sync and theme/font/scroll walkthroughs. |
+
+### Defects found (must fix before v1 close-out)
+
+1. **Reader route crash** — blank page, TDZ ReferenceError in the
+   production bundle (table above). Never seen in the sandbox because
+   the frontend bundle was never built there.
+2. **`httpx` missing from `requirements.txt`** — the Gemini engine
+   fails in the packaged image with `ModuleNotFoundError: No module
+   named 'httpx'` (the google-genai SDK needs it). The benchmark only
+   ran after installing httpx ad hoc. `/api/health` still reports
+   gemini as available, so the breakage is silent until synthesis.
