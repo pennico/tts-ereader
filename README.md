@@ -1,5 +1,11 @@
 # tts-ereader: Self-hosted read-along e-reader with AI narration
 
+> **DECOMMISSIONED (2026-10-13) - dormant.** The v1 web app is retired: the
+> owner reads via Readest, which plays the read-along EPUBs this repo's
+> pipeline uploads. No further app development. The book-daily generation
+> pipeline remains active. The repo, Docker image, and data are preserved
+> for possible future revival. See issue #39 for the decision.
+
 An AI-powered text-to-speech system that analyzes text for characters, emotion, and context, then synthesizes expressive speech with distinct character voices. The v0 CLI pipeline is validated and preserved; the v1 reader app (library, reader view, TTS with voice-by-progression, Docker deployment) is implemented.
 
 ## Status
