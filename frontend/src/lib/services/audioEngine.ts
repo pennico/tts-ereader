@@ -14,6 +14,7 @@ export interface AudioContextLike {
   createBufferSource(): AudioBufferSourceNodeLike;
   createGain(): GainNodeLike;
   resume(): Promise<void>;
+  destination: unknown;
 }
 
 export interface AudioBufferLike {
@@ -62,7 +63,7 @@ export class AudioEngine {
     this.ctx = ctx ?? createBrowserAudioContext();
     this.gain = this.ctx.createGain();
     this.gain.gain.value = 1.0;
-    this.gain.connect(undefined);
+    this.gain.connect(this.ctx.destination);
   }
 
   async decode(b64: string): Promise<AudioBufferLike> {
