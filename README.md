@@ -497,6 +497,7 @@ tts-ereader/
 ├── poc_reader.py          # Main pipeline script (CLI, Voxtral engine)
 ├── edge_reader.py         # edge-tts hybrid engine (LLM prep + free edge voices)
 ├── benchmark_tts.py       # TTS engine benchmark harness (owner-run, real keys)
+├── benchmark_profile.py   # Resource profiling harness: peak RSS + CPU (AC-606/607)
 ├── Dockerfile             # Multi-stage image: frontend build + FastAPI runtime (M4)
 ├── docker-compose.yml     # Self-hosted deployment: port 8000, ./data volume, healthcheck (M4)
 ├── epub_mo.py             # EPUB 3 Media Overlays generator (overlays on original XHTML)
@@ -656,6 +657,10 @@ M4 makes it deployable and benchmarkable:
   file per combination for A/B listening, and wall-time vs audio duration
   against the acceptance budgets (edge-tts < 2x, Gemini < 1.5x). Covered
   in the sandbox by unit tests against the mock engine.
+- Resource profiling harness (`benchmark_profile.py`): peak RSS under 10
+  concurrent TTS requests (AC-606) and mean CPU during read-along-paced
+  background synthesis (AC-607), against the in-process app with the
+  mock engine; results in `docs/QA_v1.md` §3.6.
 - Offline indicator in the app shell (red banner when the server is
   unreachable).
 - Docs: `docs/DEPLOYMENT.md` (self-hosting runbook), `docs/USER_GUIDE.md`,
