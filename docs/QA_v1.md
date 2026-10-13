@@ -157,7 +157,8 @@ dropped; see §5.
 
 1. Frontend Vitest suite — RUN 2026-10-13 self-hosted: 55/55 pass
    (7 files); svelte-check: 1 type error in tts.test.ts:57 (test file
-   only). See §6.
+   only) — FIXED 2026-10-13 (invalid fixture now cast at the argument
+   level; awaiting svelte-check re-run on the homelab). See §6.
 2. Offline banner — VERIFIED 2026-10-13 self-hosted (§6).
 3. AC-603/AC-604 live benchmark — RUN 2026-10-13, both PASS (§3.2).
 4. AC-606/AC-607 memory/CPU profiling — no harness exists.
@@ -203,7 +204,7 @@ Run on the homelab against the compose stack (`docker compose up -d
 | Live benchmark AC-603 (edge < 2.0x) | PASS — 0.026–0.051x realtime, 9 runs (it/da, 3 voices, 3 repeats) |
 | Live benchmark AC-604 (Gemini < 1.5x) | PASS — 0.368–0.429x realtime, 12 runs (Charon/Kore, it/da, 3 repeats) |
 | Frontend vitest | PASS — 55/55 tests, 7 files (node:20 container) |
-| svelte-check | 1 error: `tts.test.ts:57` — `castEnabled: "yes"` (string) where `boolean \| undefined` is expected. Test file only; the production build is unaffected. |
+| svelte-check | 1 error: `tts.test.ts:57` — `castEnabled: "yes"` (string) where `boolean \| undefined` is expected. Test file only; the production build is unaffected. **Fixed 2026-10-13** (fixture cast to `Partial<TtsSettings>` at the argument level); svelte-check re-run pending on the homelab. |
 | Offline banner (AC-701) | PASS — banner appears with `role="status"` and the exact copy, clears on reconnect (Playwright offline emulation) |
 | Reader route (AC-206, AC-101–117) | **FAIL — the reader page is blank**: `ReferenceError: Cannot access 'ce' before initialization` at `assets/index-ERqrqvaa.js:18:13488` (store subscribe during module init; TDZ). Repro: production build, open `/#/book/1` — the library `/#/` renders fine. Likely a circular import that only manifests in the Rollup bundle. Blocks highlight-sync and theme/font/scroll walkthroughs. |
 
