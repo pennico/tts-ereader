@@ -324,6 +324,14 @@ async def test_gemini_unavailable_without_key(monkeypatch):
         await engine.synthesize("Ciao", "Kore")
 
 
+def test_gemini_unavailable_without_httpx(monkeypatch):
+    # Issue #39: httpx was absent from the packaged image, yet /api/health
+    # reported gemini as available — availability must include the client.
+    engine = GeminiTTSEngine(api_key="k")
+    monkeypatch.setitem(sys.modules, "httpx", None)
+    assert not engine.is_available()
+
+
 @pytest.mark.asyncio
 async def test_gemini_list_voices_is_language_agnostic():
     engine = GeminiTTSEngine(api_key="k")

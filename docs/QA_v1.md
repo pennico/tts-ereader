@@ -217,3 +217,27 @@ Run on the homelab against the compose stack (`docker compose up -d
    named 'httpx'` (the google-genai SDK needs it). The benchmark only
    ran after installing httpx ad hoc. `/api/health` still reports
    gemini as available, so the breakage is silent until synthesis.
+
+### Defect resolution (2026-10-13, implementation session, issue #39)
+
+Both defects fixed on branch `fix/reader-tdz-httpx`:
+
+1. **Reader route crash** — root cause was not a circular import. In
+   `Reader.svelte`, `const tts = createTtsStore(bookId, browserStorage(),
+   onTtsChange)` was declared immediately *before*
+   `let prevTts: TtsSettings | null = null`. `createTtsStore` subscribes
+   synchronously, so `onTtsChange` runs inside that very initializer and
+   reads `prevTts` while it is still in its temporal dead zone — the
+   `ce` of the minified error. The library route renders because the
+   crash happens at Reader instantiation, not module init. Fixed by
+   declaring `prevTts` first. Not executable in the sandbox (no node
+   toolchain): the owner's rebuilt image must confirm `/#/book/1`
+   renders (AC-206, AC-101..117 walkthroughs).
+2. **httpx** — added to `requirements.txt` (was dev-only;
+   `app/engines/gemini.py` imports it lazily at synthesis time).
+   `GeminiTTSEngine.is_available()` now also returns False when httpx
+   cannot be imported, so `/api/health` no longer reports gemini
+   available with the client missing (regression test added). Backend
+   suite: 121/121 in a fresh venv. `requirements.lock` still needs
+   regeneration on the homelab:
+   `uv pip compile requirements.txt -o requirements.lock`.

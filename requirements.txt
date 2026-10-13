@@ -11,6 +11,9 @@ fastapi>=0.110
 uvicorn>=0.29
 sqlmodel>=0.0.16
 python-multipart>=0.0.9
+# The Gemini engine's REST client (app/engines/gemini.py); previously only a
+# dev dependency, so the packaged image failed at synthesis time (issue #39).
+httpx>=0.24
 
 # poc_reader.py fetches from the Mistral/Gemini APIs via requests
 requests>=2.31
