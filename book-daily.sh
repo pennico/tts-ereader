@@ -29,7 +29,7 @@ BATCH_CHARS=400        # the 400-char method: near-zero recitation blocks
 DAILY_BUDGET=90       # of the observed 100/day; margin kept for ad-hoc tests
 MIN_USEFUL=5          # below this, not worth starting a chapter today
 FIRST_CH=3           # spine: 0-2 front matter, 3 = book chapter 1
-LAST_CH=20           # spine index of the last real chapter
+LAST_CH=21           # last real chapter; ch6 split 2026-10-14 (virtual ch6 + ch6-2) shifted the rest +1
 LEDGER=out/quota_ledger.json
 LOG=out/book-daily.log
 
