@@ -1,10 +1,11 @@
 # Daily growing-book reading (owner decision, 2026-10-09; approach
-# switched to loyal 2026-10-11 after the owner judged the loyal-sample
-# run): one Gemini quota window per day, the next unread chapter
-# VERBATIM (footnotes out, one request per paragraph — the box method),
-# appended to the single growing EPUB (out/readings/loyal-gemini38/
-# readalong-saramago-full.epub). Files a `run` issue; the ops
-# dispatcher executes `bash -c 'APPROACH=loyal bash book-daily.sh'` in the repo
+# switched to loyal 2026-10-11, switched BACK to prepared 2026-10-14
+# by the owner for faster progression under the daily quota): one
+# Gemini quota window per day, the next unread chapter with the
+# 400-char method (LLM repunctuation), appended to the single growing
+# EPUB (out/readings/prepared-gemini38/readalong-saramago-full.epub).
+# Files a `run` issue; the ops dispatcher executes
+# `bash -c 'APPROACH=prepared bash book-daily.sh'` in the repo
 # clone inside the agent-runner container (no LLM session) and
 # notifies over ntfy.
 #
@@ -52,7 +53,7 @@ jobs:
               owner, repo,
               title: 'book-daily: read the next chapter(s)',
               body: [
-                "bash -c 'APPROACH=loyal bash book-daily.sh'",
+                "bash -c 'APPROACH=prepared bash book-daily.sh'",
                 '',
                 'Scheduled daily growing-book reading (auto-filed by '
                 + 'book-daily.yml; the dispatcher executes the command '
