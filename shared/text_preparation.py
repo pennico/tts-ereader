@@ -97,6 +97,13 @@ def chunk_text(text, max_chars=4000):
     return chunks
 
 
+# Model preambles seen in practice ("Ecco il testo preparato:",
+# "Here is the prepared text:", "Her er teksten:").
+_PREAMBLE = re.compile(
+    r"^(ecco|here|her er|nedenfor|below|di seguito|testo preparato|"
+    r"prepared text|forberedt tekst)\b", re.IGNORECASE)
+
+
 def llm_prepare(client, model, text, retries=3, language="it"):
     """One LLM call per chunk: clean + repunctuate + speaker tags."""
     prompt = prepare_prompt(language)
@@ -114,8 +121,11 @@ def llm_prepare(client, model, text, retries=3, language="it"):
             # unless it looks like a speaker tag (all-caps name, [f]/[m])
             lines = content.split("\n")
             first = lines[0].strip()
+            # Only a real preamble: narration ending in a colon ("poi
+            # disse:") is content and must stay (2026-10-17, seen on Claude).
             if first.endswith(":") and not first.isupper() \
-                    and not re.search(r"\[[fm]\]:$", first):
+                    and not re.search(r"\[[fm]\]:$", first) \
+                    and _PREAMBLE.match(first):
                 content = "\n".join(lines[1:]).strip()
             # Drop standalone separator lines ("---")
             content = re.sub(r"(?m)^\s*-{3,}\s*$", "", content).strip()

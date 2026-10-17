@@ -127,6 +127,21 @@ def test_prepared_text_regenerated_on_fingerprint_mismatch(tmp_path):
     assert (ch_dir / "prepared_meta.txt").read_text() == _fingerprint(args, 3, "raw")
 
 
+def test_prepared_text_survives_an_llm_switch(tmp_path, capsys):
+    """Switching --model-llm (Mistral -> Claude) must not re-prepare a
+    chapter: new lines would miss the segment cache and re-spend the
+    chapter's Gemini quota."""
+    ch_dir = tmp_path / "ch003"
+    ch_dir.mkdir()
+    (ch_dir / "prepared_text.txt").write_text("cached preparation")
+    old = _args(tmp_path)
+    (ch_dir / "prepared_meta.txt").write_text(_fingerprint(old, 3, "raw"))
+    new = _args(tmp_path)
+    new.model_llm = "claude-sonnet-5-5"
+    text = gr.prepared_chapter_text(_RaisingClient(), new, 3, ch_dir, "raw")
+    assert text == "cached preparation"
+    assert "reusing prepared text" in capsys.readouterr().out
+
 def test_reprepare_flag_forces_regeneration(tmp_path):
     ch_dir = tmp_path / "ch003"
     ch_dir.mkdir()

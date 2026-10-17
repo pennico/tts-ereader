@@ -99,6 +99,7 @@ existing paths (this is how the scheduled job calls it).
 | `FIRST_CH` / `LAST_CH` | `0` / required | Spine range to read (`LAST_CH` is required for your own book) |
 | `TTS_MODEL` | `gemini-3.8-flash-lite-tts` | Gemini TTS model (3.8 or newer only) |
 | `TTS_VOICE` | `Rami` | Single narrator voice |
+| `PREP_LLM` | `claude-sonnet-5-5` | Text-preparation LLM for `prepared` (Claude Code CLI on the subscription token; a Mistral model name such as `mistral-large-latest` switches back) |
 | `DAILY_BUDGET` | `90` | Requests per day this job may spend |
 | `MIN_USEFUL` | `5` | Do not start a chapter with fewer requests left |
 | `BATCH_CHARS` | `400` | Characters per request in `prepared` mode |
