@@ -12,6 +12,7 @@ import {
 class FakeContext implements AudioContextLike {
   currentTime = 0;
   sampleRate = 24000;
+  destination: unknown = {};
   lastSource: FakeSource | null = null;
 
   async decodeAudioData(data: ArrayBuffer): Promise<AudioBufferLike> {
