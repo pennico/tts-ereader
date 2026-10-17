@@ -17,8 +17,9 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+# The exact pins CI tests against (requirements.txt only has lower bounds).
+COPY requirements.lock ./
+RUN pip install --no-cache-dir -r requirements.lock
 
 COPY backend/ ./backend/
 # shared/: the preparation pipeline imports shared.text_preparation at
