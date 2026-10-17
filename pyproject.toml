@@ -1,0 +1,92 @@
+# Project metadata and tool config. Dependencies mirror requirements.txt
+# (same lower bounds); the exact, tested pins live in requirements.lock
+# (`uv pip compile requirements.txt -o requirements.lock`). Keep the three
+# in sync when a dependency changes.
+#
+# The CLIs locate .env, out/ and backend/ relative to the repo checkout,
+# so install editable from a clone: `pip install -e ".[dev]"`.
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tts-ereader"
+version = "1.1.0"
+description = "Read-along EPUB 3 generator with Gemini / edge-tts narration (the v1 web reader is archived)"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Nicola Ghislotti" }]
+requires-python = ">=3.9"
+keywords = ["epub3", "media-overlays", "read-along", "tts", "audiobook", "gemini", "edge-tts"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Topic :: Multimedia :: Sound/Audio :: Speech",
+  "Development Status :: 7 - Inactive",
+]
+dependencies = [
+  # v0 CLI pipeline
+  "edge-tts>=7.0",
+  "mistralai>=1.0.0",
+  "pydub>=0.25.1",
+  "mutagen>=1.47.0",
+  # archived v1 reader app (backend); gemini_readaloud imports its engine
+  "fastapi>=0.110",
+  "uvicorn>=0.29",
+  "sqlmodel>=0.0.16",
+  "python-multipart>=0.0.9",
+  "httpx>=0.24",
+  # poc_reader.py
+  "requests>=2.31",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.0",
+  "pytest-asyncio>=0.23",
+  "httpx>=0.24",
+  "ruff==0.17.0",
+]
+
+[project.urls]
+Repository = "https://github.com/pennico/tts-ereader"
+Issues = "https://github.com/pennico/tts-ereader/issues"
+
+[project.scripts]
+tts-gemini-readaloud = "gemini_readaloud:main"
+tts-epub-readaloud = "epub_readaloud:main"
+tts-epub-fixedlayout = "epub_fixedlayout:main"
+tts-epub-mo = "epub_mo:main"
+tts-edge-reader = "edge_reader:main"
+
+[tool.setuptools]
+py-modules = [
+  "gemini_readaloud", "epub_readaloud", "epub_fixedlayout", "epub_mo",
+  "edge_reader", "poc_reader",
+]
+packages = ["shared"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "backend/tests", "dispatcher"]
+
+# Ruff: lint what matters, ignore deliberate patterns (moved from ruff.toml).
+[tool.ruff]
+line-length = 120
+target-version = "py39"  # the Mac runs 3.9, the container 3.12
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "UP", "RUF100"]
+ignore = [
+  "B008",  # FastAPI Depends pattern in backend/
+  "B017",  # pytest.raises without match in tests
+  "BLE001",  # blind-except: pipelines are deliberately resilient
+  "DTZ005",  # naive datetime: local time is intentional (homelab cron, CET)
+  "E501",  # long lines: LLM prompt strings are deliberately long
+  # gradual adoption — fix opportunistically, do not add new instances:
+  "B007", "B905", "B904", "E741", "UP031",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# conftest imports Mistral to decide whether to stub the module
+"tests/conftest.py" = ["F401"]

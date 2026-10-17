@@ -17,6 +17,8 @@ set -u
 cd "$(dirname "$0")"
 
 MODEL=gemini-3.8-flash-lite-tts
+EPUB=${EPUB:-out/archive/saramago.epub}   # source book (default: the daily book)
+CHAPTER=${CHAPTER:-3}            # spine index of the sampled chapter
 SLICE=${SLICE:-3700}             # source chars for this sample
 OFFSET=${OFFSET:-0}              # paragraphs skipped first: continue a
 NAME=${NAME:-loyal-sample-ch1}   # previous sample (OFFSET=its SLICE)
@@ -30,7 +32,7 @@ if ! grep -q -- "--prepare-mode" gemini_readaloud.py 2>/dev/null; then
 fi
 
 rm -rf "$WORK" "$OUT"
-python3 gemini_readaloud.py --epub out/archive/saramago.epub --chapter 3 \
+python3 gemini_readaloud.py --epub "$EPUB" --chapter "$CHAPTER" \
     --slice "$SLICE" --slice-offset "$OFFSET" \
     --prepare-mode loyal --single Rami --model "$MODEL" \
     --daily-requests 0 --max-requests 16 \

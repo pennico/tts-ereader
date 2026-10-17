@@ -2,6 +2,11 @@
 
 AI-powered TTS eReader: LLM text preparation + voice-cast synthesis, being
 developed into a full ebook reader app with voice-by-progression read-along.
+**Status (2026-10-13, issue #39): dormant.** The v1 web app is
+decommissioned; the only active part is the `book-daily.sh` growing-book
+pipeline. Do not start new app work unless an issue from the owner asks
+for it. The text below describes the v1 build phase.
+
 Read `README.md`, `PLAN_epub3_readalong.md` (v0 history), and
 `PLAN_v1_reader.md` (current goal) before starting. Do not re-litigate
 decided questions (voice cast, book-level delivery, web-app-with-known-iOS-
