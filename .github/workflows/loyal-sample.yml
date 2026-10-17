@@ -1,0 +1,54 @@
+# One-shot loyal-mode sample (owner decision, 2026-10-09): the first
+# paragraphs of book chapter 1 read VERBATIM (Saramago's own rhythm,
+# footnotes out, one request per <=300-char piece). Files a `run`
+# issue; the ops dispatcher executes `bash loyal-sample.sh`
+# in the repo clone inside the agent-runner container (no LLM
+# session) and the mp3 is published to Nextcloud out/listening.
+#
+# Armed only while the repository variable TTS_LOYAL_SAMPLE =
+# "enabled"; a successful run DELETES the variable, so this fires
+# exactly once:
+#   gh variable set TTS_LOYAL_SAMPLE --body enabled    # arm
+#   gh variable delete TTS_LOYAL_SAMPLE                # disarm
+name: loyal-sample
+on:
+  schedule:
+    # 00:15 UTC (02:15 CEST): after the observed Gemini quota reset
+    # at 00:00 UTC, with margin for GitHub's schedule delay. The run
+    # is budget-capped (--max-requests 16) and idempotent.
+    - cron: "15 0 * * *"
+  workflow_dispatch: {}
+
+# The GITHUB_TOKEN needs explicit write access to create the `run`
+# issue; without this block the default read-only token fails with
+# 403 "Resource not accessible by integration" (seen 2026-10-10).
+permissions:
+  issues: write
+
+jobs:
+  file-run-issue:
+    if: vars.TTS_LOYAL_SAMPLE == 'enabled'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            try {
+              await github.rest.issues.createLabel({
+                owner, repo, name: 'run', color: 'D4C5F9' });
+            } catch (e) {
+              // label already exists
+            }
+            await github.rest.issues.create({
+              owner, repo,
+              title: 'loyal-sample: first paragraphs, verbatim Saramago',
+              body: [
+                'bash loyal-sample.sh',
+                '',
+                'One-shot loyal-mode sample (auto-filed by '
+                + 'loyal-sample.yml; the dispatcher executes the command '
+                + 'above directly).',
+              ].join('\n'),
+              labels: ['run'],
+            });

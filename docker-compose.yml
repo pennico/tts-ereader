@@ -1,0 +1,24 @@
+# Homelab deployment (ARCHITECTURE_v1 §6.4). Copy this file and .env to the
+# server, then `docker compose up -d`.
+services:
+  tts-ereader:
+    build: .
+    image: tts-ereader:latest
+    container_name: tts-ereader
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      # All state (DB, EPUBs, covers, audio cache) lives in one bind mount;
+      # the app derives every subdirectory from TTSEREADER_DATA_DIR.
+      TTSEREADER_DATA_DIR: /data
+    volumes:
+      - ./data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health', timeout=4)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s

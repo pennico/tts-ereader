@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#1a1a2e">
+<title>AI eReader — PoC Player</title>
+<style>
+  :root {
+    --bg: #1a1a2e;
+    --bg-card: #16213e;
+    --bg-hover: #0f3460;
+    --text: #e0e0e0;
+    --text-dim: #888;
+    --accent: #e94560;
+    --accent-dim: #e9456040;
+    --narrator: #4ecca3;
+    --dialogue: #e94560;
+    --technical: #a371f7;
+    --voice: #f5a623;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  header {
+    background: var(--bg-card);
+    padding: 14px 20px;
+    border-bottom: 1px solid #ffffff10;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+
+  header h1 {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--accent);
+  }
+
+  #selector-bar {
+    display: flex;
+    gap: 10px;
+    margin-top: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
+  #selector-bar select {
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid #ffffff30;
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 14px;
+    cursor: pointer;
+  }
+
+  #selector-bar select:focus { outline: none; border-color: var(--accent); }
+
+  #style-toggle {
+    display: flex;
+    background: var(--bg);
+    border: 1px solid #ffffff30;
+    border-radius: 8px;
+    overflow: hidden;
+  }
+
+  #style-toggle button {
+    background: transparent;
+    color: var(--text-dim);
+    border: none;
+    padding: 8px 14px;
+    font-size: 14px;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+  }
+
+  #style-toggle button.active {
+    background: var(--accent);
+    color: white;
+  }
+
+  header .meta {
+    font-size: 13px;
+    color: var(--text-dim);
+    margin-top: 8px;
+  }
+
+  #player-bar {
+    background: var(--bg-card);
+    padding: 12px 20px;
+    border-bottom: 1px solid #ffffff10;
+    position: sticky;
+    top: 120px;
+    z-index: 99;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  #play-btn {
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: 50%;
+    width: 48px;
+    height: 48px;
+    font-size: 20px;
+    cursor: pointer;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.1s;
+  }
+
+  #play-btn:active { transform: scale(0.92); }
+
+  #progress-container {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  #progress-bar {
+    width: 100%;
+    height: 6px;
+    background: #ffffff20;
+    border-radius: 3px;
+    cursor: pointer;
+    position: relative;
+  }
+
+  #progress-fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 3px;
+    width: 0%;
+    transition: width 0.1s linear;
+  }
+
+  #time-display {
+    font-size: 12px;
+    color: var(--text-dim);
+    font-variant-numeric: tabular-nums;
+  }
+
+  #speed-btn {
+    background: transparent;
+    color: var(--text-dim);
+    border: 1px solid #ffffff30;
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 13px;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  #content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 24px 20px 120px;
+    max-width: 700px;
+    margin: 0 auto;
+    width: 100%;
+  }
+
+  .segment {
+    padding: 14px 16px;
+    margin-bottom: 8px;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: background 0.2s, border-color 0.2s;
+    border: 2px solid transparent;
+  }
+
+  .segment:hover { background: #ffffff08; }
+
+  .segment.active {
+    background: var(--accent-dim);
+    border-color: var(--accent);
+  }
+
+  .segment .seg-text {
+    font-size: 17px;
+    line-height: 1.8;
+  }
+
+  .segment .seg-meta {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-top: 6px;
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .seg-tag {
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-weight: 500;
+  }
+
+  .seg-tag.narration { background: var(--narrator)20; color: var(--narrator); }
+  .seg-tag.dialogue { background: var(--dialogue)20; color: var(--dialogue); }
+  .seg-tag.technical { background: var(--technical)20; color: var(--technical); }
+  .seg-tag.emotion { background: #ffffff10; color: var(--text-dim); }
+  .seg-tag.voice { background: var(--voice)20; color: var(--voice); }
+
+  #loading {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--text-dim);
+  }
+
+  #loading .spinner {
+    width: 40px;
+    height: 40px;
+    border: 3px solid #ffffff20;
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin: 0 auto 16px;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  #error {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--accent);
+    display: none;
+  }
+
+  #error p { margin-bottom: 12px; }
+  #error code {
+    background: #ffffff10;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 13px;
+  }
+
+  @media (max-width: 600px) {
+    .segment .seg-text { font-size: 16px; }
+    header h1 { font-size: 16px; }
+    #player-bar { top: 140px; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>AI eReader — PoC Player</h1>
+  <div id="selector-bar">
+    <select id="sample-select">
+      <option value="english_fiction">English Fiction</option>
+      <option value="italian_fiction">Italian Fiction</option>
+      <option value="saramago">Saramago — edge hybrid</option>
+    </select>
+    <div id="style-toggle">
+      <button id="style-basic" onclick="switchStyle('basic')">Basic</button>
+      <button id="style-enhanced" class="active" onclick="switchStyle('enhanced')">Enhanced</button>
+    </div>
+  </div>
+  <div class="meta" id="meta">Loading...</div>
+</header>
+
+<div id="player-bar">
+  <button id="play-btn" aria-label="Play/Pause">&#9654;</button>
+  <div id="progress-container">
+    <div id="progress-bar">
+      <div id="progress-fill"></div>
+    </div>
+    <div id="time-display">0:00 / 0:00</div>
+  </div>
+  <button id="speed-btn">1.0x</button>
+</div>
+
+<div id="loading">
+  <div class="spinner"></div>
+  <p>Loading audio and manifest...</p>
+</div>
+
+<div id="error">
+  <p>Could not load files. Make sure you are serving via HTTP:</p>
+  <p><code>python3 -m http.server 8000</code></p>
+  <p>Then open <code>http://localhost:8000/poc_player.html</code></p>
+</div>
+
+<div id="content" style="display:none;"></div>
+
+<script>
+// ── Config ────────────────────────────────────────────────────────────
+
+const SAMPLES = {
+  english_fiction: { label: "English Fiction", dir: "out/english" },
+  italian_fiction: { label: "Italian Fiction", dir: "out/italian" },
+  saramago: { label: "Saramago — edge hybrid", dir: "out/saramago_edge", single: true },
+};
+
+let currentSample = "english_fiction";
+let currentStyle = "enhanced";
+
+let audio = null;
+let manifest = null;
+let segments = [];
+let currentSegment = -1;
+let speeds = [0.75, 1.0, 1.25, 1.5, 2.0];
+let speedIdx = 1;
+
+// ── Path helpers ──────────────────────────────────────────────────────
+
+function getDir() {
+  const s = SAMPLES[currentSample];
+  if (s.single) return s.dir;
+  return currentStyle === "basic" ? `${s.dir}_basic` : `${s.dir}_enhanced`;
+}
+
+function getAudioUrl() { return `${getDir()}/poc_output.mp3`; }
+function getManifestUrl() { return `${getDir()}/poc_manifest.json`; }
+
+// ── Load ───────────────────────────────────────────────────────────────
+
+async function load() {
+  document.getElementById("loading").style.display = "block";
+  document.getElementById("error").style.display = "none";
+  document.getElementById("content").style.display = "none";
+
+  // Stop old audio
+  if (audio) {
+    audio.pause();
+    audio.src = "";
+  }
+
+  try {
+    const resp = await fetch(getManifestUrl());
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    manifest = await resp.json();
+    segments = manifest.segments || [];
+
+    document.getElementById("meta").textContent =
+      `${manifest.sample || "unknown"} — ${manifest.language || "?"} — ` +
+      `${segments.length} segments — ${manifest.style || currentStyle}`;
+
+    audio = new Audio(getAudioUrl());
+    audio.preload = "auto";
+    audio.playbackRate = speeds[speedIdx];
+
+    audio.addEventListener("timeupdate", onTimeUpdate);
+    audio.addEventListener("loadedmetadata", () => updateTimeDisplay());
+    audio.addEventListener("ended", () => {
+      document.getElementById("play-btn").innerHTML = "&#9654;";
+      currentSegment = -1;
+      updateHighlight();
+    });
+
+    renderSegments();
+
+    document.getElementById("loading").style.display = "none";
+    document.getElementById("content").style.display = "block";
+  } catch (e) {
+    console.error(e);
+    document.getElementById("loading").style.display = "none";
+    document.getElementById("error").style.display = "block";
+  }
+}
+
+// ── Render ─────────────────────────────────────────────────────────────
+
+function renderSegments() {
+  const container = document.getElementById("content");
+  container.innerHTML = "";
+
+  segments.forEach((seg, i) => {
+    const div = document.createElement("div");
+    div.className = "segment";
+    div.id = `seg-${i}`;
+    div.dataset.index = i;
+
+    const roleClass = seg.role || "narration";
+    const voiceName = seg.voice_name || "";
+    const showVoice = voiceName && currentStyle === "enhanced";
+
+    div.innerHTML = `
+      <div class="seg-text">${escapeHtml(seg.text)}</div>
+      <div class="seg-meta">
+        <span class="seg-tag ${roleClass}">${seg.speaker || seg.role || ""}</span>
+        ${seg.emotion && seg.emotion !== "neutral" ? `<span class="seg-tag emotion">${seg.emotion}</span>` : ""}
+        ${seg.pace && seg.pace !== "normal" ? `<span class="seg-tag emotion">${seg.pace}</span>` : ""}
+        ${showVoice ? `<span class="seg-tag voice">${voiceName}</span>` : ""}
+      </div>
+    `;
+
+    div.addEventListener("click", () => seekToSegment(i));
+    container.appendChild(div);
+  });
+}
+
+function escapeHtml(text) {
+  const div = document.createElement("div");
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+// ── Sync ───────────────────────────────────────────────────────────────
+
+function onTimeUpdate() {
+  const t = audio.currentTime;
+  updateProgress(t);
+  updateActiveSegment(t);
+}
+
+function updateProgress(t) {
+  if (!audio.duration || isNaN(audio.duration)) return;
+  const pct = (t / audio.duration) * 100;
+  document.getElementById("progress-fill").style.width = pct + "%";
+  updateTimeDisplay();
+}
+
+function updateActiveSegment(t) {
+  let found = -1;
+  for (let i = 0; i < segments.length; i++) {
+    if (t >= segments[i].start && t < segments[i].end) {
+      found = i;
+      break;
+    }
+  }
+  if (found === -1) {
+    for (let i = segments.length - 1; i >= 0; i--) {
+      if (t >= segments[i].start) { found = i; break; }
+    }
+  }
+  if (found !== currentSegment) {
+    currentSegment = found;
+    updateHighlight();
+  }
+}
+
+function updateHighlight() {
+  document.querySelectorAll(".segment").forEach(el => el.classList.remove("active"));
+  if (currentSegment >= 0) {
+    const el = document.getElementById(`seg-${currentSegment}`);
+    if (el) {
+      el.classList.add("active");
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }
+}
+
+function seekToSegment(i) {
+  if (i < 0 || i >= segments.length) return;
+  audio.currentTime = segments[i].start;
+  currentSegment = i;
+  updateHighlight();
+  if (audio.paused) {
+    audio.play();
+    document.getElementById("play-btn").innerHTML = "&#10074;&#10074;";
+  }
+}
+
+// ── Controls ──────────────────────────────────────────────────────────
+
+function setupControls() {
+  document.getElementById("play-btn").addEventListener("click", togglePlay);
+  document.getElementById("progress-bar").addEventListener("click", seekTo);
+  document.getElementById("speed-btn").addEventListener("click", cycleSpeed);
+  document.getElementById("sample-select").addEventListener("change", (e) => {
+    currentSample = e.target.value;
+    currentSegment = -1;
+    load();
+  });
+}
+
+function togglePlay() {
+  if (audio.paused) {
+    audio.play();
+    document.getElementById("play-btn").innerHTML = "&#10074;&#10074;";
+  } else {
+    audio.pause();
+    document.getElementById("play-btn").innerHTML = "&#9654;";
+  }
+}
+
+function seekTo(e) {
+  const rect = e.currentTarget.getBoundingClientRect();
+  const pct = (e.clientX - rect.left) / rect.width;
+  if (audio.duration) {
+    audio.currentTime = pct * audio.duration;
+  }
+}
+
+function cycleSpeed() {
+  speedIdx = (speedIdx + 1) % speeds.length;
+  const speed = speeds[speedIdx];
+  audio.playbackRate = speed;
+  document.getElementById("speed-btn").textContent = speed.toFixed(2).replace(/\.?0+$/, "") + "x";
+}
+
+function switchStyle(style) {
+  if (style === currentStyle) return;
+  currentStyle = style;
+  document.getElementById("style-basic").classList.toggle("active", style === "basic");
+  document.getElementById("style-enhanced").classList.toggle("active", style === "enhanced");
+  currentSegment = -1;
+  load();
+}
+
+function formatTime(s) {
+  if (!s || isNaN(s)) return "0:00";
+  const m = Math.floor(s / 60);
+  const sec = Math.floor(s % 60);
+  return `${m}:${sec.toString().padStart(2, "0")}`;
+}
+
+function updateTimeDisplay() {
+  document.getElementById("time-display").textContent =
+    `${formatTime(audio.currentTime)} / ${formatTime(audio.duration)}`;
+}
+
+// ── Start ─────────────────────────────────────────────────────────────
+
+setupControls();
+load();
+</script>
+</body>
+</html>

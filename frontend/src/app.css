@@ -1,0 +1,102 @@
+/* Global styles. Theme colors come from CSS variables set by applyTheme(). */
+
+:root {
+  --bg: #ffffff;
+  --fg: #1a1a1a;
+  --muted: #6b6b6b;
+  --panel: #f2f2f2;
+  --accent: #34506b;
+  --border: #dcdcdc;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-size: 15px;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+#app {
+  height: 100%;
+}
+
+a {
+  color: var(--accent);
+}
+
+button {
+  background: var(--panel);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+button:hover {
+  border-color: var(--accent);
+}
+
+button.primary {
+  background: var(--accent);
+  color: var(--bg);
+  border-color: var(--accent);
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+select,
+input[type="number"],
+input[type="color"] {
+  background: var(--panel);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 6px;
+  font-size: 14px;
+}
+
+input[type="range"] {
+  accent-color: var(--accent);
+}
+
+.centered {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 12px;
+}
+
+.error {
+  color: #b33;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.offline-banner {
+  background: #b33;
+  color: #fff;
+  padding: 8px 16px;
+  font-size: 14px;
+  text-align: center;
+}

@@ -1,0 +1,63 @@
+# Daily growing-book reading (owner decision, 2026-10-09; approach
+# switched to loyal 2026-10-11, switched BACK to prepared 2026-10-14
+# by the owner for faster progression under the daily quota): one
+# Gemini quota window per day, the next unread chapter with the
+# 400-char method (LLM repunctuation), appended to the single growing
+# EPUB (out/readings/prepared-gemini38/readalong-saramago-full.epub).
+# Files a `run` issue; the ops dispatcher executes
+# `bash -c 'APPROACH=prepared bash book-daily.sh'` in the repo
+# clone inside the agent-runner container (no LLM session) and
+# notifies over ntfy.
+#
+# DISABLED BY DEFAULT — the owner arms it explicitly when the daily
+# Gemini quota is free again (needs it for own tests first). The job
+# runs only while the repository variable TTS_BOOK_DAILY = "enabled":
+#   gh variable set TTS_BOOK_DAILY --body enabled    # arm
+#   gh variable delete TTS_BOOK_DAILY                # disarm
+# Until the variable is set, the schedule fires and does nothing.
+# Also requires the 400-char engine (PR #41) merged to main; the
+# wrapper checks and fails loudly otherwise.
+name: book-daily
+on:
+  schedule:
+    # 00:10 UTC (02:10 CEST), just after the observed Gemini quota
+    # reset at 00:00 UTC. GitHub may delay scheduled runs a few
+    # minutes; the job is budget-aware and idempotent, so a late or
+    # repeated fire is harmless.
+    - cron: "10 0 * * *"
+  workflow_dispatch: {}
+
+# The GITHUB_TOKEN needs explicit write access to create the `run`
+# issue; without this block the default read-only token fails with
+# 403 "Resource not accessible by integration" (seen 2026-10-10 on
+# loyal-sample, same github-script issue creation).
+permissions:
+  issues: write
+
+jobs:
+  file-run-issue:
+    if: vars.TTS_BOOK_DAILY == 'enabled'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            try {
+              await github.rest.issues.createLabel({
+                owner, repo, name: 'run', color: 'D4C5F9' });
+            } catch (e) {
+              // label already exists
+            }
+            await github.rest.issues.create({
+              owner, repo,
+              title: 'book-daily: read the next chapter(s)',
+              body: [
+                "bash -c 'APPROACH=prepared bash book-daily.sh'",
+                '',
+                'Scheduled daily growing-book reading (auto-filed by '
+                + 'book-daily.yml; the dispatcher executes the command '
+                + 'above directly).',
+              ].join('\n'),
+              labels: ['run'],
+            });
