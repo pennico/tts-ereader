@@ -60,6 +60,10 @@ WORK=${WORK_DIR:-$READ_DIR/work}
 OUT=${OUT_EPUB:-$READ_DIR/readalong-$BOOK-full.epub}
 MODEL=${TTS_MODEL:-gemini-3.8-flash-lite-tts}
 VOICE=${TTS_VOICE:-Rami}
+# Text-preparation LLM for APPROACH=prepared (2026-10-17: Claude via the
+# Claude Code CLI on the subscription; Mistral's monthly limit was hit).
+# A Mistral model name (e.g. mistral-large-latest) switches back.
+PREP_LLM=${PREP_LLM:-claude-sonnet-5-5}
 BATCH_CHARS=${BATCH_CHARS:-400}     # the 400-char method: near-zero recitation blocks
 DAILY_BUDGET=${DAILY_BUDGET:-90}    # of the observed 100/day; margin kept for ad-hoc tests
 MIN_USEFUL=${MIN_USEFUL:-5}         # below this, not worth starting a chapter today
@@ -67,7 +71,7 @@ LEDGER=${LEDGER:-out/quota_ledger.json}
 LOG=${BOOK_DAILY_LOG:-out/book-daily.log}
 
 if [ -n "${DRY_RUN:-}" ]; then
-  for v in EPUB BOOK APPROACH MODEL VOICE FIRST_CH LAST_CH DAILY_BUDGET \
+  for v in EPUB BOOK APPROACH MODEL VOICE PREP_LLM FIRST_CH LAST_CH DAILY_BUDGET \
            MIN_USEFUL BATCH_CHARS WORK OUT LEDGER LOG; do
     printf '%s=%s\n' "$v" "${!v}"
   done
@@ -132,6 +136,7 @@ while [ "$next" -le "$LAST_CH" ] && [ "$remaining" -ge "$MIN_USEFUL" ]; do
   fi
   python3 gemini_readaloud.py --epub "$EPUB" --chapter "$next" \
       --single "$VOICE" --model "$MODEL" --prepare-mode "$APPROACH" \
+      --model-llm "$PREP_LLM" \
       $BATCH_ARGS --max-requests "$remaining" \
       --growing --work-dir "$WORK" --output "$OUT" >> "$LOG" 2>&1
   rc=$?

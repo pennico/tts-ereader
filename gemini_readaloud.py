@@ -108,6 +108,7 @@ from epub_readaloud import (  # noqa: E402
 )
 from poc_reader import chunk_text, extract_epub_chapter, list_epub_chapters  # noqa: E402
 from shared.audio_clean import THRESH_QUIET, clean_pcm  # noqa: E402
+from shared.claude_cli import ClaudeCLIClient, is_claude_model  # noqa: E402
 from shared.quota_ledger import add_entry, day_totals  # noqa: E402
 from shared.text_preparation import (  # noqa: E402
     llm_prepare,
@@ -149,6 +150,17 @@ def cast_voice(speaker, gender, args):
     return args.voice_f if gender == "f" else args.voice_m
 
 
+def _same_source(stored, fingerprint):
+    """Fingerprints match, ignoring the LLM field (index 4): text prepared
+    by one LLM stays valid after switching to another, and re-preparing
+    would rewrite every line and re-spend the chapter's Gemini quota.
+    --reprepare forces a fresh preparation."""
+    a, b = stored.split("|"), fingerprint.split("|")
+    if len(a) != len(b):
+        return False
+    return a[:4] + a[5:] == b[:4] + b[5:]
+
+
 def prepared_chapter_text(client, args, idx, ch_dir, text):
     """Prepared text for one chapter, reused across runs (issue #17).
 
@@ -170,7 +182,7 @@ def prepared_chapter_text(client, args, idx, ch_dir, text):
                             hashlib.sha1(text.encode()).hexdigest()))
     if (not args.reprepare and prepared_file.exists()
             and meta_file.exists()
-            and meta_file.read_text() == fingerprint):
+            and _same_source(meta_file.read_text(), fingerprint)):
         print("  reusing prepared text from previous run", flush=True)
         return prepared_file.read_text()
     chunks = chunk_text(text, max_chars=args.max_chars)
@@ -953,7 +965,9 @@ def main():
                         help="Gemini TTS model (default %(default)s; owner "
                              "decision 2026-10-07)")
     parser.add_argument("--model-llm", default="mistral-large-latest",
-                        help="Mistral model for text preparation")
+                        help="Text-preparation LLM: a Mistral model, or a "
+                             "claude-* model run through the Claude Code "
+                             "CLI (subscription token)")
     parser.add_argument("--prepare-mode", choices=["prepared", "loyal"],
                         default="prepared",
                         help="Text breakdown (owner decision, 2026-10-09): "
@@ -1144,19 +1158,24 @@ def main():
         return
 
     load_env()
-    if not os.environ.get("MISTRAL_API_KEY"):
+    use_claude = is_claude_model(args.model_llm)
+    if not use_claude and not os.environ.get("MISTRAL_API_KEY"):
         print("ERROR: MISTRAL_API_KEY not set (env or .env)")
         sys.exit(1)
     if not os.environ.get("GEMINI_API_KEY"):
         print("ERROR: GEMINI_API_KEY not set (env or .env)")
         sys.exit(1)
 
-    try:
-        from mistralai import Mistral
-    except ImportError:  # mistralai 2.x: client moved off the top level
-        from mistralai.client import Mistral
     import httpx
-    client = Mistral(api_key=os.environ["MISTRAL_API_KEY"])
+    if use_claude:
+        # Claude Code CLI on the owner's subscription (2026-10-17)
+        client = ClaudeCLIClient()
+    else:
+        try:
+            from mistralai import Mistral
+        except ImportError:  # mistralai 2.x: client moved off the top level
+            from mistralai.client import Mistral
+        client = Mistral(api_key=os.environ["MISTRAL_API_KEY"])
 
     # Growing-book chapter numbering: positions are relative to the
     # first chapter of the book (the lowest spine index among the

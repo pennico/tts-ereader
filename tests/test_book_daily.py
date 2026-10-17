@@ -103,3 +103,9 @@ def test_other_book_requires_last_chapter():
     r = _run("books/other.epub", DRY_RUN="1")
     assert r.returncode == 2
     assert "LAST_CH is required" in r.stderr
+
+
+def test_prep_llm_defaults_to_claude_and_is_overridable():
+    assert _config()["PREP_LLM"] == "claude-sonnet-5-5"
+    assert _config(PREP_LLM="mistral-large-latest")["PREP_LLM"] == \
+        "mistral-large-latest"
