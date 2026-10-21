@@ -391,6 +391,31 @@ async def test_recitation_filter_splits_into_sentences(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_recitation_filter_splits_single_sentence_at_commas(tmp_path):
+    # Issue #85: a blocked line with no sentence boundary is split into
+    # clauses at , ; : instead of failing the chapter.
+    text = "Il pensionato bevve in un sorso, poi fece segno; e pagò:"
+    assert gr._sentence_pieces(text) == [
+        "Il pensionato bevve in un sorso,", "poi fece segno;", "e pagò:"]
+    eng = _FakeEngine([_filter_error()] + [_speech_wav()] * 3)
+    seg = await gr.synth_line(eng, "Kore", text, tmp_path, pace=0)
+    assert eng.calls == 4  # full line blocked, then three clauses
+    assert seg.exists() and seg.stat().st_size > 1000
+
+
+@pytest.mark.asyncio
+async def test_recitation_filter_blocked_sentence_falls_back_to_clauses(
+        tmp_path):
+    # Sentences first; a sentence that is itself blocked splits at commas.
+    text = "Prima frase, con virgola. Seconda frase."
+    eng = _FakeEngine([_filter_error(), _filter_error(),
+                       _speech_wav(), _speech_wav(), _speech_wav()])
+    seg = await gr.synth_line(eng, "Kore", text, tmp_path, pace=0)
+    assert eng.calls == 5  # line, sentence 1 blocked, 2 clauses, sentence 2
+    assert seg.exists() and seg.stat().st_size > 1000
+
+
+@pytest.mark.asyncio
 async def test_recitation_filter_unsplittable_line_reraises(tmp_path):
     # No sentence boundary to split at: the original error propagates
     # (the run stays resumable via the cache).
