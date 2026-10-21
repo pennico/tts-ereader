@@ -272,8 +272,12 @@ def _quota_abort_message(exc):
 
 
 def _sentence_pieces(text):
-    """Split a line into sentence pieces for the filter fallback."""
-    return [s for s in re.split(r"(?<=[.!?…])\s+", text.strip()) if s]
+    """Split a line into pieces for the filter fallback: sentences, or
+    clauses (at , ; :) when the line is a single sentence (issue #85)."""
+    pieces = [s for s in re.split(r"(?<=[.!?…])\s+", text.strip()) if s]
+    if len(pieces) > 1:
+        return pieces
+    return [s for s in re.split(r"(?<=[,;:])\s+", text.strip()) if s]
 
 
 async def _request_with_quota_retries(request, max_retries=5):
@@ -326,9 +330,10 @@ def _apply_request_budget(eng, cap):
 async def synth_line(eng, voice, text, cache_dir, pace, max_retries=5):
     """Synthesize one line, clean it, cache it. Returns the WAV path.
 
-    Lines blocked by the recitation filter are split into sentences,
-    synthesized piece by piece, and stitched back into one cached
-    segment (the pieces are cached too, so re-runs resume).
+    Lines blocked by the recitation filter are split into sentences
+    (a blocked single sentence into clauses), synthesized piece by
+    piece, and stitched back into one cached segment (the pieces are
+    cached too, so re-runs resume).
     """
     key = hashlib.sha1(f"{eng.model}|{voice}|{text}".encode()).hexdigest()[:16]
     seg = cache_dir / f"{voice}-{key}.wav"
@@ -342,7 +347,7 @@ async def synth_line(eng, voice, text, cache_dir, pace, max_retries=5):
         if not _is_content_filter(e) or len(parts) < 2:
             raise
         print(f"    recitation filter on line, synthesizing "
-              f"{len(parts)} sentences separately", flush=True)
+              f"{len(parts)} pieces separately", flush=True)
         wavs = [await synth_line(eng, voice, p, cache_dir, pace, max_retries)
                 for p in parts]
         wav_bytes, _ = stitch(wavs, SENTENCE_GAP_MS)
