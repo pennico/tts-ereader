@@ -7,7 +7,7 @@
 # Files a `run` issue; the ops dispatcher executes
 # `bash -c 'APPROACH=prepared bash book-daily.sh'` in the repo
 # clone inside the agent-runner container (no LLM session) and
-# notifies over ntfy.
+# sends its summary through the notifier.
 #
 # DISABLED BY DEFAULT — the owner arms it explicitly when the daily
 # Gemini quota is free again (needs it for own tests first). The job
