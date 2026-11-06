@@ -287,7 +287,9 @@ async def _request_with_quota_retries(request, max_retries=5):
     a hard wall (observed limit: 100 requests/day per model) that resets
     hours later. Retry-backoff only burns ten minutes against it; abort
     at once — cached segments make the run resumable. Per-minute 429s
-    are transient and keep the 60-240 s backoff retry.
+    are transient and keep the 60-240 s backoff retry. So do server-side
+    5xx errors (2026-11-05: one 503 UNAVAILABLE failed the whole daily
+    run mid-chapter).
     """
     for attempt in range(max_retries):
         try:
@@ -295,12 +297,22 @@ async def _request_with_quota_retries(request, max_retries=5):
         except Exception as e:
             if _is_daily_quota(e):
                 raise QuotaExhausted(_quota_abort_message(e)) from e
-            if "429" in str(e) and attempt < max_retries - 1:
+            code = _transient_code(e)
+            if code and attempt < max_retries - 1:
                 wait = 60 * (attempt + 1)
-                print(f"    429, waiting {wait}s...", flush=True)
+                print(f"    {code}, waiting {wait}s...", flush=True)
                 await asyncio.sleep(wait)
             else:
                 raise
+
+
+def _transient_code(exc):
+    """The HTTP status of an error worth retrying (per-minute 429, or a
+    500/502/503/504 from the API), else None."""
+    m = re.search(r"Gemini API error (\d{3})", str(exc))
+    if m and m.group(1) in ("500", "502", "503", "504"):
+        return m.group(1)
+    return "429" if "429" in str(exc) else None
 
 
 def _apply_request_budget(eng, cap):
