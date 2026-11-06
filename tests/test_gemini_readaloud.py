@@ -345,6 +345,35 @@ async def test_per_minute_429_keeps_backoff_retry(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_server_503_is_retried(tmp_path, monkeypatch):
+    # 2026-11-05: one 503 UNAVAILABLE failed the daily run mid-chapter.
+    from app.engines.base import EngineError
+    sleeps = []
+
+    async def fake_sleep(s):
+        sleeps.append(s)
+
+    monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+    err = EngineError('Gemini API error 503: {"error": {"code": 503, '
+                      '"message": "The service is currently unavailable.", '
+                      '"status": "UNAVAILABLE"}}')
+    eng = _FakeEngine([err, _speech_wav()])
+    seg = await gr.synth_line(eng, "Kore", "test line", tmp_path, pace=0)
+    assert eng.calls == 2
+    assert sleeps == [60, 0]
+    assert seg.exists()
+
+
+@pytest.mark.asyncio
+async def test_client_400_is_not_retried(tmp_path):
+    from app.engines.base import EngineError
+    eng = _FakeEngine([EngineError("Gemini API error 400: bad request"), _speech_wav()])
+    with pytest.raises(EngineError, match="400"):
+        await gr.synth_line(eng, "Kore", "test line", tmp_path, pace=0)
+    assert eng.calls == 1
+
+
+@pytest.mark.asyncio
 async def test_cached_segment_skips_engine(tmp_path):
     key = hashlib.sha1(
         b"gemini-3.8-flash-tts|Kore|test line").hexdigest()[:16]
