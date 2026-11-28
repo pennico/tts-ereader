@@ -1,0 +1,41 @@
+out/
+.DS_Store
+*.mp3
+*.wav
+*.opus
+*.flac
+*.pcm
+__pycache__/
+*.pyc
+.env
+voices/*.mp3
+voices/*.wav
+samples/*.epub
+data/
+.pytest_cache/
+node_modules/
+frontend/dist/
+*.tsbuildinfo
+coverage/
+.coverage
+htmlcov/
+homelab/
+# secrets: every .env variant, but keep the template
+.env.*
+!.env.example
+# local environments, tool caches, editors
+.venv/
+venv/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+build/
+dist/
+.idea/
+.vscode/
+*.log
+# never commit books (only generated fixtures, outside the repo)
+*.epub
+
+# Private pattern list for scripts/scan-private.sh (never committed)
+private/
